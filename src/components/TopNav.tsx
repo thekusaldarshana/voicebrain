@@ -1,0 +1,20 @@
+export type Page = 'record' | 'library' | 'settings'
+
+const items: { page: Page; label: string }[] = [
+  { page: 'record', label: 'Record' },
+  { page: 'library', label: 'Library' },
+  { page: 'settings', label: 'Settings' },
+]
+
+/** Same top bar as Trapper: ringed brand mark and pill navigation. */
+export function TopNav({ current, waiting }: { current: Page; waiting: number }) {
+  return <header className="topbar"><div className="shell topbar-inner">
+    <a className="brand" href="#/record" aria-label="Trapper Voice, record"><span className="brand-mark" aria-hidden="true">V</span><span>Trapper Voice</span></a>
+    <nav className="top-nav" aria-label="Main navigation">
+      {items.map(item => <a key={item.page} className="nav-link" href={`#/${item.page}`} aria-current={item.page === current ? 'page' : undefined}>
+        {item.label}
+        {item.page === 'library' && waiting > 0 && <span className="nav-count" aria-label={`${waiting} waiting to upload`}>{waiting}</span>}
+      </a>)}
+    </nav>
+  </div></header>
+}

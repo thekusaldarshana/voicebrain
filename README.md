@@ -1,0 +1,84 @@
+# Trapper Voice
+
+Record a voice note. When you tap **Stop**, everything after that happens on its own: the note is saved on the device, then uploaded to your server, retried if the connection is bad, and finished even if you have closed the app.
+
+It is a PWA (installable on Android, desktop and iPhone) built the same way as Trapper: Vite, React 19, TypeScript, the shared `tokens.css` design system, and a Tauri shell for desktop.
+
+## What it does
+
+**Recording**
+- One big Record/Stop button, Pause/Resume, and **Mark** (bookmark a moment, `M` on a keyboard). `Space` starts and stops.
+- Live level meter and `00:00:00` clock. Pause time is not counted.
+- Audio is written to storage **every second**. If the tab dies, the phone restarts or the battery runs out, the next launch rebuilds the recording and uploads it (marked "recovered").
+- Keeps the screen awake while recording, tells you if the system mutes the microphone, and stops cleanly if the microphone is unplugged.
+- Quality (24–128 kbps Opus), microphone choice, noise suppression, auto gain, echo cancellation.
+- Home-screen shortcut **Record a note** (`?record=1`) starts recording as soon as the app opens. An optional setting does it on every launch.
+
+**Uploading**
+- Starts the moment a note is saved. `POST {server}/v1/notes`, multipart (`meta` JSON + `audio`), bearer token, `Idempotency-Key` = note id, so retries never duplicate.
+- Offline or server down: the note stays on the device and retries with exponential backoff (5 s up to 15 min, with jitter, honouring `Retry-After`). Coming back online retries immediately.
+- **Closed app**: a service worker uploads waiting notes in the background when the browser reports a connection (Chromium on Android and desktop). Where Background Sync does not exist (iPhone, Firefox) uploads resume when you open the app.
+- Wrong token or a rejected file stops retrying and asks for attention ("Needs attention"), then resumes by itself after you fix Settings.
+- Only one uploader runs at a time (Web Locks), so the page and the service worker never double-send.
+
+**Library**
+- Notes grouped by day, search by title or tag, filters (All / Waiting / Uploaded / Needs attention).
+- Every status is written out in words, never colour alone.
+- Play back, jump to marked moments, rename, tag, download, delete with a 7-second **Undo**. "Upload now" and "Retry" per note.
+- **Import audio** adds existing recordings (m4a, mp3, wav, ogg, …) to the same queue.
+
+**Settings**
+- Server address and token, **Test connection**, pairing link (`https://app/#/pair?e=<server>&t=<token>&n=<name>`; the fragment never reaches a server and is removed from the address bar).
+- Auto-upload on/off, how long to keep audio on the device after upload (0 days to forever), storage use, "Keep my data" (persistent storage), install help.
+
+**Works offline** from the first launch (the build output is precached).
+
+## Run it
+
+```bash
+npm install
+npm run dev                          # http://localhost:5173 (microphone works on localhost)
+
+# a receiver to upload to, on your VPS or locally
+INGEST_TOKEN=choose-a-long-random-token npm run receiver      # :8787, notes in server/data/inbox/<id>/
+node server/receiver.mjs pair --app https://voice.example.com --endpoint https://notes.example.com --token <token>
+#   -> prints a link; open it on the phone and it configures itself
+```
+
+Production: `npm run build`, then serve `dist/` from any static host **over HTTPS** (browsers only allow the microphone on https or localhost). The build uses relative URLs, so it also works under a sub-path. Put the receiver behind HTTPS too (Caddy or nginx), or the phone cannot reach it from an https page.
+
+The receiver is a reference implementation: zero dependencies, token auth, idempotent, writes `audio.<ext>` and `meta.json` per note. It is the hand-off point for whatever comes next (transcription, the wiki, the MCP server).
+
+### Upload contract (what any server must do)
+
+| | |
+|---|---|
+| `GET /v1/ping` | `200` if the bearer token is valid (used by "Test connection") |
+| `POST /v1/notes` | multipart: `meta` = JSON, `audio` = file; header `Idempotency-Key: <note id>` |
+| `201` / `200` / `409` | stored (409 = already had it). The app treats all as done |
+| `408 425 429 5xx`, network error | retried with backoff |
+| other `4xx` | the note shows "Needs attention" |
+
+`meta`: `id, createdAt (ISO), durationMs, mime, size, title, tags, marks (ms), recovered, source ("record"|"import"), device, timezone, utcOffsetMinutes, app`.
+
+## Verify
+
+```bash
+npm test            # 27 unit tests: formatting, upload rules, receiver, service-worker parity
+npm run lint
+npm run build && npm run test:e2e
+```
+
+`test:e2e` drives the built app in real Chromium with a fake microphone against the receiver: pairing, record, mark, pause, auto-upload, offline, server outage, wrong token, delete and undo, crash recovery, import, offline launch, upload by the service worker with every tab closed, layout at 320 px, accessible button names. Screenshots go to `artifacts/e2e/`.
+
+## Desktop and Android with Tauri
+
+`src-tauri/` mirrors Trapper's setup (`npm run tauri dev`, `npm run tauri build`). **It has not been compiled or run yet**, because the machine this was built on lacks the Linux WebKit libraries. Two known gaps before it is useful:
+- Desktop Linux (WebKitGTK) and Android (WebView) do not grant `getUserMedia` on their own. Each needs a few lines of native permission handling.
+- A custom `tauri://` origin cannot register service workers, so background upload does not apply there.
+
+The PWA is the supported way to run this today. If the phone needs recording with the screen off, or a Stop button in the notification shade, that needs a native recorder (Expo or Kotlin). The queue, protocol and receiver here carry over unchanged.
+
+## Design
+
+Colours, type, spacing and states come from Trapper's `src/styles/tokens.css` (copied verbatim) and `design.md`. See `design.md` here for the few Voice-specific decisions.

@@ -1,0 +1,70 @@
+/* Trapper design tokens. See ../../design.md before changing shared UI values. */
+:root {
+  color-scheme: dark;
+
+  /* Palette inherited from the accepted Week and Today prototypes. */
+  --color-canvas: #0b0b0b;
+  --color-surface: #121212;
+  --color-surface-raised: #262626;
+  --color-border: #232323;
+  --color-text: #eeeeee;
+  --color-text-strong: #d2d2d2;
+  --color-text-secondary: #b5b5b5;
+  --color-text-tertiary: #a1a1a1;
+  --color-text-muted: #787878;
+  --color-focus: #d5bea7;
+  --color-error: #e4a6a6;
+
+  /* Existing component aliases. Keep these until all page CSS is migrated. */
+  --background: var(--color-canvas);
+  --surface: var(--color-surface);
+  --surface-raised: var(--color-surface-raised);
+  --border: var(--color-border);
+  --ink: var(--color-text);
+  --ink-strong: var(--color-text-strong);
+  --ink-secondary: var(--color-text-secondary);
+  --ink-tertiary: var(--color-text-tertiary);
+  --ink-muted: var(--color-text-muted);
+
+  --font-ui: "Red Hat Display Variable", "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  --font-size-xs: 11px;
+  --font-size-sm: 12px;
+  --font-size-body: 14px;
+  --font-size-section: 25px;
+  --font-size-display: clamp(42px, 6vw, 64px);
+  --line-height-body: 1.5;
+
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 20px;
+  --space-6: 24px;
+  --space-8: 32px;
+  --space-10: 40px;
+  --space-12: 48px;
+
+  --radius-control: 9px;
+  --radius-card: 18px;
+  --radius-shape: 24px;
+  --radius-pill: 999px;
+  --ring-diameter: 20px;
+  --ring-stroke: 2px;
+  --progress-height: 4px;
+  --timer-progress-height: 6px;
+
+  --motion-fast: 160ms;
+  --motion-progress: 800ms;
+  --week-content-max: 1040px;
+  --today-content-max: 1380px;
+  font-family: var(--font-ui);
+  font-synthesis: none;
+  -webkit-font-smoothing: antialiased;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  :root {
+    --motion-fast: 0ms;
+    --motion-progress: 0ms;
+  }
+}
