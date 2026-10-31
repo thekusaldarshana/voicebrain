@@ -14,7 +14,7 @@ export interface Config {
   allowedOrigin: string
   /** IANA zone used for "today" and for notes written in chat. Example: Asia/Colombo */
   ownerTimezone: string
-  stt: (ProviderConfig & { language: string; maxMb: number; prompt: string }) | null
+  stt: (ProviderConfig & { provider: 'openai' | 'gemini'; language: string; maxMb: number; prompt: string }) | null
   llm: (ProviderConfig & { maxInputChars: number }) | null
   workerEnabled: boolean
   workerIntervalMs: number
@@ -35,7 +35,8 @@ export function loadConfig(env: Record<string, string | undefined> = process.env
   const publicUrl = trimSlash(text(env.PUBLIC_URL))
   if (ownerPassphrase && !publicUrl) throw new Error('PUBLIC_URL is required when OWNER_PASSPHRASE is set (ChatGPT signs in through it).')
 
-  const sttBase = trimSlash(text(env.STT_BASE_URL))
+  const sttProvider = text(env.STT_PROVIDER) === 'gemini' || text(env.STT_BASE_URL).includes('generativelanguage.googleapis.com') ? 'gemini' : 'openai'
+  const sttBase = trimSlash(text(env.STT_BASE_URL) || (sttProvider === 'gemini' && env.STT_PROVIDER ? 'https://generativelanguage.googleapis.com/v1beta' : ''))
   const llmBase = trimSlash(text(env.LLM_BASE_URL))
   return {
     port: Number(env.PORT ?? 8787),
@@ -47,7 +48,7 @@ export function loadConfig(env: Record<string, string | undefined> = process.env
     ownerPassphrase,
     allowedOrigin: text(env.ALLOWED_ORIGIN, '*'),
     ownerTimezone: text(env.OWNER_TIMEZONE, 'UTC'),
-    stt: sttBase ? { baseUrl: sttBase, apiKey: text(env.STT_API_KEY), model: text(env.STT_MODEL, 'whisper-1'), language: text(env.STT_LANGUAGE, 'en'), maxMb: Number(env.STT_MAX_MB ?? 24), prompt: text(env.STT_PROMPT) } : null,
+    stt: sttBase ? { provider: sttProvider, baseUrl: sttBase, apiKey: text(env.STT_API_KEY), model: text(env.STT_MODEL, sttProvider === 'gemini' ? 'gemini-3.5-transcribe' : 'whisper-1'), language: text(env.STT_LANGUAGE, 'en'), maxMb: Number(env.STT_MAX_MB ?? (sttProvider === 'gemini' ? 14 : 24)), prompt: text(env.STT_PROMPT) } : null,
     llm: llmBase ? { baseUrl: llmBase, apiKey: text(env.LLM_API_KEY), model: text(env.LLM_MODEL), maxInputChars: Number(env.LLM_MAX_INPUT_CHARS ?? 20_000) } : null,
     workerEnabled: env.WORKER !== '0',
     workerIntervalMs: Number(env.WORKER_INTERVAL_MS ?? 5000),

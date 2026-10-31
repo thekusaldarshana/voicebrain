@@ -14,7 +14,7 @@ let dir: Awaited<ReturnType<typeof tempDir>>
 let stt: Fake
 let llm: Fake
 let server: Running | null = null
-const withProviders = (extra: Partial<Config> = {}) => testConfig(dir.dir, { stt: { baseUrl: stt.url, apiKey: 'k', model: 'whisper-test', language: 'en', maxMb: 24, prompt: '' }, llm: { baseUrl: llm.url, apiKey: 'k', model: 'llm-test', maxInputChars: 20_000 }, ...extra })
+const withProviders = (extra: Partial<Config> = {}) => testConfig(dir.dir, { stt: { provider: 'openai', baseUrl: stt.url, apiKey: 'k', model: 'whisper-test', language: 'en', maxMb: 24, prompt: '' }, llm: { baseUrl: llm.url, apiKey: 'k', model: 'llm-test', maxInputChars: 20_000 }, ...extra })
 const read = (rel: string) => readFile(join(dir.dir, rel), 'utf8')
 const digested = (id = NOTE_ID) => () => server?.app.brain.index.note(id)?.digested === 1
 /** Waits for the note to be digested, then for the pass that filed it to finish writing everything. */

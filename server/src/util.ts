@@ -67,3 +67,23 @@ export class Mutex {
 }
 
 export const errorText = (error: unknown) => (error instanceof Error ? error.message : String(error))
+
+const rotation = new Map<string, number>()
+
+/**
+ * Sends a request with each configured key in turn. `apiKeys` may hold several keys separated by commas;
+ * each call starts from the next key, and a rate-limited (429) key hands over to the next one.
+ */
+export async function withKeys(apiKeys: string, request: (key: string) => Promise<Response>): Promise<Response> {
+  const keys = apiKeys.split(',').map(key => key.trim()).filter(Boolean)
+  if (keys.length <= 1) return request(keys[0] ?? '')
+  const start = rotation.get(apiKeys) ?? 0
+  rotation.set(apiKeys, start + 1)
+  let last: Response | null = null
+  for (let attempt = 0; attempt < keys.length; attempt += 1) {
+    const response = await request(keys[(start + attempt) % keys.length] as string)
+    if (response.status !== 429) return response
+    last = response
+  }
+  return last as Response
+}

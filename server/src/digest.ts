@@ -1,7 +1,7 @@
 import type { Config } from './config.ts'
 import type { Fetch } from './stt.ts'
 import type { Digest, Mention, NoteMeta, Priority, Quoted, Task, Transcript } from './types.ts'
-import { PermanentError, errorText, localParts, slugify } from './util.ts'
+import { PermanentError, errorText, localParts, slugify, withKeys } from './util.ts'
 
 type Llm = NonNullable<Config['llm']>
 
@@ -111,9 +111,9 @@ export function extractJson(content: string): unknown {
 
 /** Any OpenAI-compatible `/chat/completions` server. */
 export async function chatJson(config: Llm, system: string, user: string, fetchImpl: Fetch = fetch): Promise<unknown> {
-  const call = async (withFormat: boolean) => fetchImpl(`${config.baseUrl}/chat/completions`, {
+  const call = async (withFormat: boolean) => withKeys(config.apiKey, key => fetchImpl(`${config.baseUrl}/chat/completions`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json', ...(config.apiKey ? { Authorization: `Bearer ${config.apiKey}` } : {}) },
+    headers: { 'Content-Type': 'application/json', ...(key ? { Authorization: `Bearer ${key}` } : {}) },
     body: JSON.stringify({
       model: config.model,
       temperature: 0.1,
@@ -121,7 +121,7 @@ export async function chatJson(config: Llm, system: string, user: string, fetchI
       ...(withFormat ? { response_format: { type: 'json_object' } } : {}),
     }),
     signal: AbortSignal.timeout(5 * 60_000),
-  })
+  }))
   let response: Response
   try { response = await call(true) } catch (error) { throw new Error(`Language model unreachable: ${errorText(error)}`) }
   if (response.status === 400) {

@@ -21,7 +21,7 @@ beforeEach(async () => {
   origin = `http://127.0.0.1:${port}`
   server = await run(testConfig(dir.dir, {
     port, publicUrl: origin, ownerPassphrase: PASSPHRASE, mcpToken: MCP_TOKEN,
-    stt: { baseUrl: stt.url, apiKey: '', model: 'w', language: 'en', maxMb: 24, prompt: '' },
+    stt: { provider: 'openai', baseUrl: stt.url, apiKey: '', model: 'w', language: 'en', maxMb: 24, prompt: '' },
     llm: { baseUrl: llm.url, apiKey: '', model: 'l', maxInputChars: 20_000 },
   }))
   await upload(server.base)

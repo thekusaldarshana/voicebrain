@@ -69,7 +69,7 @@ The server stores each upload as `audio.<ext>` plus `meta.json` and runs it thro
 
 ```bash
 npm test            # 23 unit tests: formatting, upload rules, service-worker parity
-npm run server:test # 83 backend tests: pipeline, search, vault, OAuth, MCP, upload contract
+npm run server:test # 96 backend tests: pipeline, search, vault, OAuth, MCP, providers, upload contract
 npm run lint
 npm run build && npm run test:e2e
 ```

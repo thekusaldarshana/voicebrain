@@ -122,3 +122,12 @@ export async function run(config: Config, fetchImpl: typeof fetch = fetch): Prom
   const port = await app.listen(config.port)
   return { app, base: `http://127.0.0.1:${port}`, stop: () => app.close() }
 }
+
+/** A Gemini generateContent server. `parts` is what the model's reply contains. */
+export function fakeGemini(parts: unknown[] = [{ audioTranscription: { text: TRANSCRIPT } }]): Promise<Fake> {
+  return fake(async (request, raw, record) => {
+    record.json = JSON.parse(raw.toString('utf8'))
+    record.fields['x-goog-api-key'] = String(request.headers['x-goog-api-key'] ?? '')
+    return { body: { candidates: [{ content: { role: 'model', parts } }] } }
+  })
+}

@@ -9,7 +9,7 @@ import { TRANSCRIPT, fakeStt, type Fake } from './helpers.ts'
 let dir = ''
 let audio = ''
 let stt: Fake
-const config = (extra = {}) => ({ baseUrl: stt.url, apiKey: 'secret', model: 'whisper-large-v3-turbo', language: 'en', maxMb: 24, prompt: 'Trapper, voicebrain', ...extra })
+const config = (extra = {}) => ({ provider: 'openai' as const, baseUrl: stt.url, apiKey: 'secret', model: 'whisper-large-v3-turbo', language: 'en', maxMb: 24, prompt: 'Trapper, voicebrain', ...extra })
 
 beforeAll(async () => {
   dir = await mkdtemp(join(tmpdir(), 'stt-'))
