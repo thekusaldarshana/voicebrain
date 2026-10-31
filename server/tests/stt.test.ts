@@ -50,6 +50,13 @@ describe('transcription client', () => {
     expect(transcript).toMatchObject({ text: 'Plain words here.', segments: [], suspectedSilence: false })
   })
 
+  it('records the model a self-hosted server says it really loaded', async () => {
+    stt.respond(() => ({ body: { text: 'Hello there.', model: 'small.en', segments: [] } }))
+    const transcript = await transcribe(config({ model: 'a-label-from-env' }), audio, 'audio/webm')
+    stt.respond(() => null)
+    expect(transcript.model).toBe('small.en')
+  })
+
   it('retries server trouble and gives up on client errors', async () => {
     stt.respond(() => ({ status: 503, body: 'busy' }))
     await expect(transcribe(config(), audio, 'audio/webm')).rejects.not.toBeInstanceOf(PermanentError)

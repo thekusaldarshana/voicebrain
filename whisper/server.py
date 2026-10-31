@@ -12,11 +12,12 @@ import threading
 import time
 
 from fastapi import Depends, FastAPI, File, Form, Header, HTTPException, UploadFile
+from fastapi.responses import PlainTextResponse
 from faster_whisper import WhisperModel
 
-MODEL = os.environ.get("WHISPER_MODEL", "small.en")
-THREADS = int(os.environ.get("WHISPER_THREADS", os.cpu_count() or 4))
-COMPUTE = os.environ.get("WHISPER_COMPUTE", "int8")
+MODEL = os.environ.get("WHISPER_MODEL") or "small.en"
+THREADS = int(os.environ.get("WHISPER_THREADS") or os.cpu_count() or 4)
+COMPUTE = os.environ.get("WHISPER_COMPUTE") or "int8"
 API_KEY = os.environ.get("WHISPER_API_KEY", "")
 MAX_BYTES = int(os.environ.get("WHISPER_MAX_MB", "200")) * 1024 * 1024
 
@@ -74,7 +75,7 @@ def transcribe(
             raise HTTPException(status_code=422, detail=f"could not read the audio: {error}")
     text = " ".join(row["text"].strip() for row in rows).strip()
     if response_format == "text":
-        return text
+        return PlainTextResponse(text)
     body = {"text": text}
     if response_format == "verbose_json":
         body |= {"task": "transcribe", "language": info.language, "duration": round(info.duration, 2), "model": MODEL, "segments": rows}
