@@ -1,0 +1,8 @@
+# Add to the Caddyfile you already run on the VPS, then: sudo systemctl reload caddy
+brain.example.com {
+	encode zstd gzip
+	request_body {
+		max_size 250MB
+	}
+	reverse_proxy 127.0.0.1:8787
+}

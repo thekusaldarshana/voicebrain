@@ -9,9 +9,11 @@
     "lint": "oxlint",
     "test": "vitest run",
     "test:e2e": "node scripts/e2e.mjs",
-    "receiver": "node server/receiver.mjs",
+    "receiver": "npm --prefix server start",
     "tauri": "tauri",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "server:install": "npm --prefix server install",
+    "server:test": "npm --prefix server test"
   },
   "dependencies": {
     "@fontsource-variable/red-hat-display": "^5.3.0",

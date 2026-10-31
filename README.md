@@ -4,6 +4,8 @@ Record a voice note. When you tap **Stop**, everything after that happens on its
 
 It is a PWA (installable on Android, desktop and iPhone) built the same way as Trapper: Vite, React 19, TypeScript, the shared `tokens.css` design system, and a Tauri shell for desktop.
 
+The other half is `server/`: it receives the uploads, transcribes them, extracts tasks and ideas, keeps a versioned markdown vault, and lets ChatGPT read it over MCP. See [`server/README.md`](server/README.md).
+
 ## What it does
 
 **Recording**
@@ -39,15 +41,17 @@ It is a PWA (installable on Android, desktop and iPhone) built the same way as T
 npm install
 npm run dev                          # http://localhost:5173 (microphone works on localhost)
 
-# a receiver to upload to, on your VPS or locally
+# the server to upload to, locally (Node 22.18+)
+npm run server:install
 INGEST_TOKEN=choose-a-long-random-token npm run receiver      # :8787, notes in server/data/inbox/<id>/
-node server/receiver.mjs pair --app https://voice.example.com --endpoint https://notes.example.com --token <token>
+node server/src/main.ts pair --app https://voice.example.com --endpoint https://notes.example.com --token <token>
 #   -> prints a link; open it on the phone and it configures itself
+# production: docker compose up -d --build   (see server/README.md)
 ```
 
 Production: `npm run build`, then serve `dist/` from any static host **over HTTPS** (browsers only allow the microphone on https or localhost). The build uses relative URLs, so it also works under a sub-path. Put the receiver behind HTTPS too (Caddy or nginx), or the phone cannot reach it from an https page.
 
-The receiver is a reference implementation: zero dependencies, token auth, idempotent, writes `audio.<ext>` and `meta.json` per note. It is the hand-off point for whatever comes next (transcription, the wiki, the MCP server).
+The server stores each upload as `audio.<ext>` plus `meta.json` and runs it through transcription and digestion. Any server that follows the contract below works with the app.
 
 ### Upload contract (what any server must do)
 
@@ -64,7 +68,8 @@ The receiver is a reference implementation: zero dependencies, token auth, idemp
 ## Verify
 
 ```bash
-npm test            # 27 unit tests: formatting, upload rules, receiver, service-worker parity
+npm test            # 23 unit tests: formatting, upload rules, service-worker parity
+npm run server:test # 83 backend tests: pipeline, search, vault, OAuth, MCP, upload contract
 npm run lint
 npm run build && npm run test:e2e
 ```

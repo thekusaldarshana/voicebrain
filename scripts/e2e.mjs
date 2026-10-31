@@ -7,12 +7,24 @@ import { tmpdir } from 'node:os'
 import { extname, join, normalize } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { chromium } from 'playwright-core'
-import { createReceiver } from '../server/receiver.mjs'
+import { createApp } from '../server/src/app.ts'
+import { loadConfig } from '../server/src/config.ts'
+
+// The real backend (upload endpoint and storage) with transcription and the worker switched off.
+function createReceiver({ token, dataDir }) {
+  const app = createApp(loadConfig({ INGEST_TOKEN: token, DATA_DIR: dataDir, HOST: '127.0.0.1', WORKER: '0', GIT: '0' }), { log: () => {} })
+  return {
+    inbox: app.brain.store.inbox,
+    notes: () => app.brain.store.ids(),
+    async listen(port) { await app.start(); return app.listen(port) },
+    close: () => app.close(),
+  }
+}
 
 const root = fileURLToPath(new URL('..', import.meta.url))
 const shots = join(root, 'artifacts', 'e2e')
 await mkdir(shots, { recursive: true })
-const TOKEN = 'e2e-token'
+const TOKEN = 'e2e-token-0123456789abcdef'
 const TYPES = { '.html': 'text/html', '.js': 'text/javascript', '.css': 'text/css', '.svg': 'image/svg+xml', '.png': 'image/png', '.woff2': 'font/woff2', '.webmanifest': 'application/manifest+json' }
 
 // Static server for dist/ (the same files a real host would serve).

@@ -1,0 +1,25 @@
+# voicebrain on your VPS.   cp .env.example .env  →  edit  →  docker compose up -d --build
+services:
+  voicebrain:
+    build: ./server
+    restart: unless-stopped
+    env_file: .env
+    # Run as the user that owns ./data on the host (usually 1000). Override with PUID / PGID in .env if not.
+    user: "${PUID:-1000}:${PGID:-1000}"
+    # Only your reverse proxy (Caddy) can reach it. Nothing is exposed to the internet directly.
+    ports:
+      - "127.0.0.1:8787:8787"
+    volumes:
+      - "${DATA_PATH:-./data}:/data"
+
+  # Optional private transcription on this machine: docker compose --profile local-stt up -d
+  # Then set STT_BASE_URL=http://stt:8000/v1 in .env. Not published to the host.
+  stt:
+    image: ghcr.io/speaches-ai/speaches:latest-cpu
+    profiles: ["local-stt"]
+    restart: unless-stopped
+    volumes:
+      - hf-cache:/home/ubuntu/.cache/huggingface/hub
+
+volumes:
+  hf-cache: {}
