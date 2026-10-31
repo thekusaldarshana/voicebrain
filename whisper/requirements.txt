@@ -1,0 +1,5 @@
+faster-whisper>=1.2,<2
+av>=18,<19  # faster-whisper 1.2 breaks on PyAV 19 (open() lost an argument it still passes)
+fastapi>=0.115
+uvicorn>=0.32
+python-multipart>=0.0.12

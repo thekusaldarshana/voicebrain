@@ -10,6 +10,7 @@ const FILLER_ONLY = /^(?:thank you|thanks for watching|thanks|you|bye|okay|\.|,|
 
 interface VerboseResponse {
   text?: string
+  model?: string
   language?: string
   duration?: number
   segments?: Array<{ start: number; end: number; text: string; no_speech_prob?: number; avg_logprob?: number }>
@@ -117,7 +118,8 @@ export async function transcribe(config: Stt, audioPath: string, mime: string, f
     text: body,
     language: data.language ?? null,
     durationSec: typeof data.duration === 'number' ? data.duration : null,
-    model: config.model,
+    // A self-hosted server reports the model it really loaded, which is what the note should say it was transcribed by.
+    model: typeof data.model === 'string' && data.model ? data.model : config.model,
     segments,
     suspectedSilence: body.length === 0 || FILLER_ONLY.test(body),
     createdAt: new Date().toISOString(),
