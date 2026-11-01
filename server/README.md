@@ -255,7 +255,14 @@ Adding a backend: implement `NoteStorage`, then run the shared contract suite ag
 
 Each person who signs in gets their own notes, search index, vault, wiki and background worker, started the first time they are needed (and at start-up for everyone still allowed). What an assistant or app can reach depends only on whose token it holds: a person's assistant token, a device they approved, and the Google session in their browser all resolve to their id, and every note read, edit, delete, search and wiki call goes through that person's own store. There is no way to name another person's note: ids are looked up in the caller's folder only.
 
-The owner identity (`INGEST_TOKEN`, `MCP_TOKEN`, and devices connected before Google sign-in) keeps the folders it always had. **Notes recorded before you switched to Google sign-in belong to that identity, not to your Google account**, so a new Google-connected device or ChatGPT starts with an empty brain. Moving the old notes to a person is not automated yet.
+The owner identity (`INGEST_TOKEN`, `MCP_TOKEN`, and devices connected before Google sign-in) keeps the folders it always had. **Notes recorded before you switched to Google sign-in belong to that identity, not to your Google account**, so a new Google-connected device or ChatGPT starts with an empty brain. To hand them over, sign in once with the Google account that should own them, stop the server, and run:
+
+```bash
+docker compose run --rm --no-deps voicebrain node src/main.ts adopt-owner you@gmail.com          # report only
+docker compose run --rm --no-deps voicebrain node src/main.ts adopt-owner you@gmail.com --apply  # do it
+```
+
+It moves the owner's notes and vault (wiki pages included) to that person, drops the old search index (rebuilt at start), and re-links the devices and ChatGPT connections made before the switch. It refuses if that person already has notes of their own, so it never merges or overwrites. `INGEST_TOKEN` and `MCP_TOKEN` stay on the owner identity. This is for local storage; with `STORAGE_BACKEND=drive` the owner identity keeps using this disk, and a person's notes are in their Drive.
 
 `ALLOWED_EMAILS` is a gate, not a delete button. Taking someone off it stops their browser sessions, devices, assistant tokens and Drive connection at once, and **deletes nothing**: their folder stays exactly as it was, and everything works again if you add them back. Delete `data/users/<id>/` yourself if you really want it gone.
 

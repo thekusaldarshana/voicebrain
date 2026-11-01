@@ -1,3 +1,4 @@
+import { adoptOwner } from './adopt.ts'
 import { createApp } from './app.ts'
 import { Brain } from './brain.ts'
 import { authMode, loadConfig } from './config.ts'
@@ -24,9 +25,19 @@ async function reindex() {
   } finally { brain.close() }
 }
 
+/** Gives the owner identity's notes, vault, devices and assistant connections to one Google account. */
+function adopt(argv: string[]) {
+  const email = argv.find(arg => !arg.startsWith('--')) ?? ''
+  if (!email) { console.error('Usage: node src/main.ts adopt-owner <google email> [--apply]   (stop the server first; without --apply it only reports)'); process.exit(2) }
+  const result = adoptOwner(loadConfig().dataDir, email, argv.includes('--apply'))
+  const what = `${result.notes} note${result.notes === 1 ? '' : 's'}, ${result.devices} device${result.devices === 1 ? '' : 's'}, ${result.assistantTokens} assistant connection${result.assistantTokens === 1 ? '' : 's'}`
+  console.log(result.applied ? `moved ${what} to ${result.email}` : `would move ${what} to ${result.email}. Run again with --apply (server stopped) to do it.`)
+}
+
 async function main() {
   if (process.argv[2] === 'pair') return pair(process.argv.slice(3))
   if (process.argv[2] === 'reindex') return reindex()
+  if (process.argv[2] === 'adopt-owner') return adopt(process.argv.slice(3))
   const config = loadConfig()
   const app = createApp(config)
   await app.start()

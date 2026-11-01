@@ -52,6 +52,8 @@ export class FakeDrive {
     return new Promise<void>(done => { this.server?.closeAllConnections?.(); this.server?.close(() => done()) })
   }
 
+  /** Tokens that do not follow the `tok-<account>-…` naming (a real sign-in flow mints its own): token → account. */
+  readonly tokenAccounts = new Map<string, string>()
   expire(token: string) { this.expired.add(token) }
   revoke(account: string) { this.revoked.add(account) }
   inject(fn: FakeDrive['injector']) { this.injector = fn }
@@ -94,7 +96,7 @@ export class FakeDrive {
     const fail = (status: number, reason: string) => send(status, { error: { code: status, message: reason, errors: [{ reason }], status: reason } })
 
     const token = /^Bearer (.+)$/.exec(String(request.headers.authorization ?? ''))?.[1] ?? ''
-    const account = /^tok-([A-Za-z0-9]+)-/.exec(token)?.[1] ?? ''
+    const account = this.tokenAccounts.get(token) ?? /^tok-([A-Za-z0-9]+)-/.exec(token)?.[1] ?? ''
     const isSession = url.pathname.startsWith('/upload/session/')
     if (!isSession && (!account || this.expired.has(token) || this.revoked.has(account))) return fail(401, 'authError')
     if (isSession && account && (this.expired.has(token) || this.revoked.has(account))) return fail(401, 'authError')

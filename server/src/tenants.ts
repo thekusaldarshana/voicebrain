@@ -41,11 +41,17 @@ export class Tenants {
   private readonly options: PipelineOptions
   private readonly others = new Map<string, Promise<Tenant>>()
   private running = false
+  private readonly shared: NoteStorage | null
 
-  constructor(config: Config, options: PipelineOptions = {}) {
+  /**
+   * `owner` is where the owner identity's notes live and `shared` is where everyone else's do (each under their own user id);
+   * leave both out for the backend STORAGE_BACKEND names, shared with the owner as it always was.
+   */
+  constructor(config: Config, options: PipelineOptions = {}, storages: { owner?: NoteStorage; shared?: NoteStorage } = {}) {
     this.config = config
     this.options = options
-    const brain = new Brain(config)
+    this.shared = storages.shared ?? null
+    const brain = new Brain(config, undefined, storages.owner)
     const pipeline = new Pipeline(brain, options)
     brain.onNewWork = () => pipeline.kick()
     this.owner = { userId: OWNER_ID, brain, pipeline }
@@ -66,7 +72,7 @@ export class Tenants {
 
   private async open(userId: string): Promise<Tenant> {
     const config: Config = { ...this.config, dataDir: join(this.config.dataDir, 'users', userId) }
-    const brain = new Brain(config, undefined, new ScopedStorage(this.owner.brain.store.storage, userId))
+    const brain = new Brain(config, undefined, new ScopedStorage(this.shared ?? this.owner.brain.store.storage, userId))
     const pipeline = new Pipeline(brain, this.options)
     brain.onNewWork = () => pipeline.kick()
     await brain.init()

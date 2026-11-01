@@ -8,7 +8,7 @@ import { createAuth, messagePage } from './auth.ts'
 import { DriveAccounts, TokenCipher } from './drive.ts'
 import type { DriveTokenProvider } from './drive-tokens.ts'
 import type { Brain } from './brain.ts'
-import { authMode, type Config } from './config.ts'
+import { authMode, loadStorageConfig, type Config } from './config.ts'
 import { Devices } from './devices.ts'
 import { GoogleAuth, type GoogleEndpoints } from './google.ts'
 import { handleIngest } from './ingest.ts'
@@ -16,6 +16,8 @@ import { createMcpServer } from './mcp.ts'
 import { OwnerOAuthProvider, staticTokenVerifier, type Approver } from './oauth.ts'
 import { Pairing, PairingError } from './pairing.ts'
 import type { Pipeline, PipelineOptions } from './pipeline.ts'
+import { createStorage } from './storage-factory.ts'
+import { LocalStorage } from './storage-local.ts'
 import { Tenants, type Tenant } from './tenants.ts'
 import { UUID, errorText } from './util.ts'
 import { OWNER_ID, Users } from './users.ts'
@@ -36,12 +38,9 @@ export interface App {
 }
 
 /** Test seams for sign-in. In production Google's own addresses are used. */
-export interface AuthOptions { googleEndpoints?: GoogleEndpoints }
+export interface AuthOptions { googleEndpoints?: GoogleEndpoints; driveApi?: { apiBase: string; uploadBase: string } }
 
 export function createApp(config: Config, options: PipelineOptions = {}, authOptions: AuthOptions = {}): App {
-  // One brain per person (their notes, index and vault). The owner identity's is the one the tests and the old paths know.
-  const tenants = new Tenants(config, options)
-  const { brain, pipeline } = tenants.owner
   let provider: OwnerOAuthProvider | null = null
   let http: Server | null = null
   const devices = new Devices(join(config.dataDir, 'devices.sqlite'))
@@ -51,6 +50,15 @@ export function createApp(config: Config, options: PipelineOptions = {}, authOpt
   // Drive: each person's own, encrypted at rest. Refuses to exist without the key, so a token is never stored in the clear.
   if (config.driveEnabled && (mode !== 'google' || !config.tokenEncryptionKey)) throw new Error('Google Drive needs Google sign-in and TOKEN_ENCRYPTION_KEY.')
   const drive = config.driveEnabled ? new DriveAccounts({ path: join(config.dataDir, 'drive.sqlite'), cipher: new TokenCipher(config.tokenEncryptionKey), clientId: config.googleClientId, clientSecret: config.googleClientSecret, isActive: id => users.isActive(id), ...(authOptions.googleEndpoints ? { endpoints: authOptions.googleEndpoints } : {}) }) : null
+  // One brain per person (their notes, index and vault). With STORAGE_BACKEND=drive everyone who signed in with Google keeps
+  // notes in their own Drive; the owner identity (static tokens, devices from before Google) has no Google account, so
+  // it keeps its notes on this disk.
+  const storageConfig = loadStorageConfig()
+  if (storageConfig.backend === 'drive' && !drive) throw new Error('STORAGE_BACKEND=drive needs DRIVE_ENABLED=1 (and Google sign-in, and TOKEN_ENCRYPTION_KEY).')
+  const tenants = new Tenants(config, options, storageConfig.backend === 'drive'
+    ? { owner: new LocalStorage(config.dataDir), shared: createStorage(config.dataDir, storageConfig, { driveTokens: drive as DriveAccounts, ...(authOptions.driveApi ? { driveOptions: authOptions.driveApi } : {}) }) }
+    : {})
+  const { brain, pipeline } = tenants.owner
   const google = mode === 'google' ? new GoogleAuth({ clientId: config.googleClientId, clientSecret: config.googleClientSecret, redirectUri: `${config.publicUrl}/auth/google/callback`, ...(drive ? { driveRedirectUri: `${config.publicUrl}/auth/drive/callback` } : {}), ...(authOptions.googleEndpoints ? { endpoints: authOptions.googleEndpoints } : {}) }) : null
   const authKit = google ? createAuth({ users, google, publicUrl: config.publicUrl, drive }) : null
   // Pairing needs a way to approve (a signed-in person, or the passphrase) and a public address (to show the approval page).
