@@ -4,6 +4,7 @@ import { isConfigured, isPrivateAddress, normalizeEndpoint } from '../lib/endpoi
 import { formatBytes } from '../lib/format'
 import { retryFailed } from '../lib/notes'
 import { kickUploads, pingServer } from '../lib/uploader'
+import { ChatGptCard } from '../components/ChatGptCard'
 import { ConnectCard } from '../components/ConnectCard'
 import type { Settings } from '../lib/types'
 
@@ -153,6 +154,11 @@ export function SettingsPage({ installPrompt }: { installPrompt: InstallEvent | 
         {persisted === true && <p className="hint">Storage is protected from automatic clearing.</p>}
       </section>
 
+      <section className="settings-section" aria-labelledby="chatgpt-title">
+        <h2 id="chatgpt-title">ChatGPT</h2>
+        <ChatGptCard />
+      </section>
+
       <section className="settings-section" aria-labelledby="install-title">
         <h2 id="install-title">Install</h2>
         {window.matchMedia('(display-mode: standalone)').matches
@@ -161,6 +167,12 @@ export function SettingsPage({ installPrompt }: { installPrompt: InstallEvent | 
             ? <><p className="hint">Add voicebrain to your home screen to open it like an app, offline, with a one-tap Record shortcut.</p>
               <div className="row-actions"><button type="button" className="primary-button" onClick={() => void installPrompt.prompt()}>Install app</button></div></>
             : <p className="hint">In your browser menu choose “Install app” or “Add to Home screen”. On iPhone use Share, then Add to Home Screen.</p>}
+      </section>
+
+      <section className="settings-section" aria-labelledby="help-title">
+        <h2 id="help-title">Help</h2>
+        <p className="hint">Step by step, with pictures: signing in, recording, Google Drive and ChatGPT.</p>
+        <div className="row-actions"><a className="secondary-button" href="#/guide">Open the user guide</a></div>
       </section>
     </div>
   </main>

@@ -190,3 +190,28 @@ a.primary-button { text-decoration: none; }
 .advanced[open] summary { margin-bottom: 10px; }
 .connect-prompt { margin: 12px 0 0; text-align: center; }
 .connect-prompt .primary-button { display: inline-flex; }
+
+/* ChatGPT card and the user guide */
+.chatgpt { margin-top: 14px; }
+.chatgpt .input-row { display: flex; gap: 8px; align-items: stretch; }
+.chatgpt input.mono { flex: 1; min-width: 0; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 13px; }
+.steps { margin: 14px 0 6px; padding-left: 20px; display: grid; gap: 10px; color: var(--color-text); font-size: 14px; line-height: 1.55; }
+.steps a { color: var(--color-focus); }
+.guide-page .lede { color: var(--color-text-muted); font-size: 16px; line-height: 1.6; margin: 0 0 18px; }
+.guide-contents { display: flex; flex-wrap: wrap; gap: 6px; margin: 0 0 22px; }
+.guide-contents a { padding: 6px 12px; border-radius: var(--radius-pill); border: 1px solid var(--color-border); color: var(--color-text-muted); text-decoration: none; font-size: 13px; }
+.guide-contents a:hover, .guide-contents a:focus-visible { color: var(--color-text); background: var(--color-surface); }
+.guide-section p, .guide-section li, .guide-section dd { line-height: 1.6; font-size: 14px; }
+.guide-section ul { padding-left: 20px; display: grid; gap: 6px; }
+.guide-section kbd { padding: 1px 6px; border: 1px solid var(--color-border); border-radius: 6px; font-size: 12px; }
+.shot { margin: 14px 0; }
+.shot img { display: block; max-width: min(100%, 320px); height: auto; border: 1px solid var(--color-border); border-radius: 16px; }
+.faq dt { margin-top: 12px; font-weight: 600; font-size: 14px; }
+.faq dd { margin: 2px 0 0; color: var(--color-text-muted); }
+
+a.secondary-button, a.primary-button { text-decoration: none; }
+@media (max-width: 480px) {
+  .chatgpt .input-row { flex-direction: column; }
+  .chatgpt input.mono { flex: none; width: 100%; font-size: 12px; }
+  .chatgpt .secondary-button { align-self: flex-start; }
+}

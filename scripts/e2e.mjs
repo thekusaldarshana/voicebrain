@@ -56,7 +56,7 @@ const browser = await chromium.launch({
   executablePath: process.env.CHROMIUM_PATH ?? '/opt/pw-browsers/chromium',
   args: ['--use-fake-ui-for-media-stream', '--use-fake-device-for-media-stream', '--autoplay-policy=no-user-gesture-required'],
 })
-const context = await browser.newContext({ viewport: { width: 390, height: 844 }, permissions: ['microphone'], deviceScaleFactor: 2 })
+const context = await browser.newContext({ viewport: { width: 390, height: 844 }, permissions: ['microphone', 'clipboard-read', 'clipboard-write'], deviceScaleFactor: 2 })
 const problems = []
 const watch = page => {
   page.on('pageerror', error => problems.push(`pageerror: ${error.message}`))
@@ -401,6 +401,26 @@ await step('disconnecting cuts this device off on the server', async () => {
   await tablet.getByRole('navigation', { name: 'Main navigation' }).getByRole('link', { name: 'Sign in', exact: true }).waitFor()
   await until(async () => (await serverDevices()).length === before - 1, 'the server to forget the device')
   await tablet.context().close()
+})
+
+await step('the ChatGPT card hands over this server’s address, and the user guide opens and fits a small screen', async () => {
+  const fresh = await browser.newContext({ viewport: { width: 390, height: 844 }, permissions: ['clipboard-read', 'clipboard-write'], deviceScaleFactor: 2 })
+  const page = await fresh.newPage()
+  watch(page)
+  await page.goto(`${APP}/#/pair?e=${encodeURIComponent(ENDPOINT)}&t=${TOKEN}&n=E2E%20phone`)
+  await page.getByRole('heading', { name: 'Settings', level: 1 }).waitFor()
+  assert.equal(await page.getByLabel('Address to give ChatGPT').inputValue(), `${ENDPOINT}/mcp`)
+  await page.getByRole('button', { name: 'Copy' }).click()
+  await page.getByText('Address copied. Paste it into ChatGPT.').waitFor()
+  assert.equal(await page.evaluate(() => navigator.clipboard.readText()), `${ENDPOINT}/mcp`)
+  await page.getByRole('link', { name: 'Open the user guide' }).click()
+  await page.getByRole('heading', { name: 'User guide', level: 1 }).waitFor()
+  for (const name of ['1. Sign in', '2. Record a note', '5. Connect ChatGPT', '8. Who can see your notes']) await page.getByRole('heading', { name }).waitFor()
+  assert.equal(await page.getByLabel('Address to give ChatGPT').inputValue(), `${ENDPOINT}/mcp`)
+  await page.setViewportSize({ width: 320, height: 700 })
+  assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), 'the guide scrolls sideways at 320px')
+  await page.screenshot({ path: join(shots, '14-guide.png'), fullPage: true })
+  await fresh.close()
 })
 
 await step('no page error or console error occurred', async () => assert.deepEqual(problems, []))

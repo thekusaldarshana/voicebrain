@@ -1,8 +1,8 @@
 import { useSettings, useSignOut } from '../lib/hooks'
 
-export type Page = 'record' | 'library' | 'settings'
+export type Page = 'record' | 'library' | 'settings' | 'guide'
 
-const items: { page: Page; label: string }[] = [
+const items: { page: Exclude<Page, 'guide'>; label: string }[] = [
   { page: 'record', label: 'Record' },
   { page: 'library', label: 'Library' },
   { page: 'settings', label: 'Settings' },

@@ -8,6 +8,7 @@ import { syncNames } from './lib/names'
 import { purgeUploadedAudio } from './lib/notes'
 import { recoverInterrupted } from './lib/recovery'
 import { kickUploads } from './lib/uploader'
+import { GuidePage } from './pages/GuidePage'
 import { LibraryPage } from './pages/LibraryPage'
 import { RecordPage } from './pages/RecordPage'
 import { SettingsPage } from './pages/SettingsPage'
@@ -16,7 +17,7 @@ interface InstallEvent extends Event { prompt(): Promise<void>; userChoice: Prom
 
 function currentPage(): Page {
   const name = window.location.hash.replace(/^#\/?/, '').split('?')[0]
-  return name === 'library' || name === 'settings' ? name : 'record'
+  return name === 'library' || name === 'settings' || name === 'guide' ? name : 'record'
 }
 
 function Shell() {
@@ -96,6 +97,7 @@ function Shell() {
     {page === 'record' && <RecordPage />}
     {page === 'library' && <LibraryPage />}
     {page === 'settings' && <SettingsPage installPrompt={installPrompt} />}
+    {page === 'guide' && <GuidePage />}
   </>
 }
 

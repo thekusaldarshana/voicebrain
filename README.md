@@ -89,3 +89,7 @@ The PWA is the supported way to run this today. If the phone needs recording wit
 ## Design
 
 Colours, type, spacing and states come from Trapper's `src/styles/tokens.css` (copied verbatim) and `design.md`. See `design.md` here for the few Voice-specific decisions.
+
+## User guide
+
+The guide is a page in the app (`#/guide`, also linked from Settings → Help) and its ChatGPT steps are also in Settings → ChatGPT. The pictures live in `public/guide/`. The ones of this app are retaken with `npm run build && node scripts/guide-shots.mjs` (real Chromium against the built app, with a few made-up notes; it listens on port 80, so run it as root, for example in the Playwright image). Pictures of ChatGPT's own screens cannot be generated: drop them in `public/guide/` as `chatgpt-1-developer-mode.png`, `chatgpt-2-create.png`, `chatgpt-3-sign-in.png` and `chatgpt-4-use.png` and the guide shows them; a picture that is missing is simply left out.
