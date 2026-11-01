@@ -73,15 +73,16 @@ Ask ChatGPT "run my weekly review" and it can read the week's notes and write `w
 
 `whisper/` is a small server (about 70 lines) around [faster-whisper](https://github.com/SYSTRAN/faster-whisper) with the OpenAI transcription API shape, so the voicebrain server treats it like any other transcription service. It decodes WebM/Opus, MP4/AAC, Ogg and WAV, skips silence instead of inventing words over it, returns timed segments (so marked moments show the words spoken there), and handles one recording at a time.
 
-Measured here on 4 shared vCPUs with int8 (your 8 vCPUs should be faster), on your two clips plus a 21-second spoken note:
+Measured here on 4 shared vCPUs with int8 (your 8 vCPUs should be faster). The test audio is one spoken note (55 words) degraded four ways: a noisy room, a phone call (8 kHz, 10 kbps), a far-away microphone with echo, and a phone call in traffic. Word errors against the script:
 
-| Model | Memory | Result on these clips | Speed on a 21 s note |
-|---|---|---|---|
-| `small.en` (default) | ~1 GB | matched Gemini word for word; heard the name "Nimal" as "Nemo" | 8.4 s |
-| `distil-large-v3` | ~2 GB | same | 6.7 s |
-| `large-v3-turbo` | ~3 GB | same (one digit written as "12th root of 2") | 8.6 s |
+| Model | Memory | Clean | Echo | Noisy room | Phone call | **Phone in traffic** | Speed |
+|---|---|---|---|---|---|---|---|
+| `small.en` | ~1 GB | 0% | 0% | 0% | 0% | **28%** | 3.3x realtime |
+| `distil-large-v3` | ~2 GB | 2% | 5% | 2% | 2% | **20%** | 3.2x |
+| `large-v3-turbo` (default) | ~3 GB | 0% | 0% | 0% | 0% | **14%** | 2.9x |
+| `large-v3` | ~4 GB | 2% | 2% | 2% | 2% | **12%** | 1.0x |
 
-These clips are clean generated speech, so they cannot tell the models apart; a real microphone, a noisy room or an accent might. Start with `small.en`, record a few real notes, and if it makes mistakes switch `WHISPER_MODEL=distil-large-v3` and compare.
+Read it carefully: this is one synthetic voice and 55 words, so a single word is about 2%. The differences between 0% and 2% are noise. What is real is the last column: on bad audio the larger models are clearly better, and `large-v3-turbo` gets nearly all of `large-v3`'s accuracy at about three times the speed. That is why it is the default. `large-v3` is the choice if you only care about accuracy and can wait: a 10-minute note takes about 10 minutes on 4 shared vCPUs. Your own voice, microphone and rooms are the real test.
 
 **Names are the weak spot.** Whisper guesses at names it has not seen. `STT_PROMPT=Nimal, Trapper, voicebrain` fixed "Nemo" to "Nimal" in testing. Add the names and terms you use.
 
@@ -138,6 +139,7 @@ Tests run the whole pipeline against fake transcription and language-model serve
 
 **Not verified yet**
 - **ChatGPT itself.** The OAuth and MCP flow is tested with the official MCP client and a hand-driven PKCE flow, not with ChatGPT. Its connector feature is in beta and its menus move.
+- **`large-v3-turbo` through the Whisper server.** The benchmark ran the model directly in faster-whisper; the end-to-end pipeline run used `small.en`. The server code is model-independent, but it has not been run with turbo, and the first start downloads about 1.6 GB.
 - **The Docker images and compose file.** No Docker daemon was available where this was built. The Whisper server and the voicebrain server were each run directly (Python venv, Node), not in their containers, so the `Dockerfile`s, the model download on first start, and the compose networking have never been built. They are short; `docker compose build` will show problems quickly.
 - **Speed on your VPS.** Timings above come from a 4-vCPU sandbox.
 - **Groq** and other OpenAI-compatible transcription services: covered by tests with fakes only.

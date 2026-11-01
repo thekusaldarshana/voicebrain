@@ -20,8 +20,9 @@ services:
     build: ./whisper
     restart: unless-stopped
     environment:
-      WHISPER_MODEL: "${WHISPER_MODEL:-small.en}"
-      WHISPER_THREADS: "${WHISPER_THREADS:-}"
+      WHISPER_MODEL: "${WHISPER_MODEL:-large-v3-turbo}"
+      # 6 of 8 vCPUs, so Caddy and anything else on the machine stay responsive while a note is being transcribed.
+      WHISPER_THREADS: "${WHISPER_THREADS:-6}"
     volumes:
       - whisper-models:/models
 
