@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { PairingUnavailable, ServerError, authHeaders, deleteOnServer, disconnectThisDevice, editOnServer, fetchAccount, pollPairing, startPairing } from '../src/lib/server'
+import { PairingUnavailable, ServerError, authHeaders, deleteOnServer, disconnectThisDevice, editOnServer, fetchAccount, fetchServerNotes, pollPairing, startPairing } from '../src/lib/server'
 
 const settings = { endpoint: 'vb.example.com/', token: 'vbd_secret' }
 type Seen = { url: string; method?: string; headers: Record<string, string>; body?: string }
@@ -93,5 +93,30 @@ describe('who this device is signed in as', () => {
 
   it('still shows the account when only the Drive answer is missing', async () => {
     expect(await fetchAccount(settings, answering({ '/v1/me': { status: 200, body: { account: { email: 'a@b.c' } } } }))).toEqual({ account: { email: 'a@b.c', name: 'a@b.c' }, drive: { enabled: false, connected: false, canConnect: false } })
+  })
+})
+
+describe('the names the server has for the notes', () => {
+  const answer = (body: unknown, status = 200) => fakeFetch(status, body)
+
+  it('reads titles, the person’s own names and Drive links, and ignores anything that is not a Drive link', async () => {
+    const { fetchImpl, seen } = answer({ notes: [
+      { id: 'a', title: 'Rutherford', userTitle: '', drive: 'https://drive.google.com/drive/folders/x' },
+      { id: 'b', title: 'Mine', userTitle: 'Mine', drive: 'javascript:alert(1)' },
+      { id: 'c', title: 'No link', userTitle: 5, drive: null },
+      { title: 'no id' }, null,
+    ] })
+    expect(await fetchServerNotes(settings, fetchImpl)).toEqual([
+      { id: 'a', title: 'Rutherford', userTitle: '', drive: 'https://drive.google.com/drive/folders/x' },
+      { id: 'b', title: 'Mine', userTitle: 'Mine', drive: null },
+      { id: 'c', title: 'No link', userTitle: '', drive: null },
+    ])
+    expect(seen[0]).toMatchObject({ url: 'https://vb.example.com/v1/notes', headers: { Authorization: 'Bearer vbd_secret' } })
+  })
+
+  it('says nothing rather than guess when the server refuses, is down, or answers oddly', async () => {
+    expect(await fetchServerNotes(settings, answer({}, 401).fetchImpl)).toBeNull()
+    expect(await fetchServerNotes(settings, answer({ notes: 'x' }).fetchImpl)).toBeNull()
+    expect(await fetchServerNotes(settings, broken)).toBeNull()
   })
 })

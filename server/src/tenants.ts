@@ -25,6 +25,7 @@ export class ScopedStorage implements NoteStorage {
   getStream(_user: string, noteId: string, filename: string): Promise<StoredStream | null> { return this.inner.getStream(this.userId, noteId, filename) }
   deleteNote(_user: string, noteId: string): Promise<void> { return this.inner.deleteNote(this.userId, noteId) }
   releaseAudio(_user: string, noteId: string): Promise<void> { return this.inner.releaseAudio(this.userId, noteId) }
+  async links(_user: string): Promise<Record<string, string>> { return (await this.inner.links?.(this.userId)) ?? {} }
 }
 
 export interface Tenant { userId: string; brain: Brain; pipeline: Pipeline }

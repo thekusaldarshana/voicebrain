@@ -4,6 +4,7 @@ import { TopNav, type Page } from './components/TopNav'
 import { parsePairing } from './lib/endpoint'
 import { useNotes, useOnline, useSettings, useToast } from './lib/hooks'
 import { SettingsProvider, ToastProvider } from './lib/providers'
+import { syncNames } from './lib/names'
 import { purgeUploadedAudio } from './lib/notes'
 import { recoverInterrupted } from './lib/recovery'
 import { kickUploads } from './lib/uploader'
@@ -48,6 +49,18 @@ function Shell() {
     window.addEventListener('hashchange', applyPairing) // the link was opened while the app was already running
     return () => window.removeEventListener('hashchange', applyPairing)
   }, [update, toast])
+
+  // Names the assistant gives a note (and the Drive link) arrive a little after the upload, so ask again now and then
+  // while the app is open, and whenever it comes back to the front.
+  useEffect(() => {
+    if (!settings.endpoint || !settings.token) return
+    const sync = () => { if (document.visibilityState === 'visible' && navigator.onLine) void syncNames() }
+    sync()
+    const timer = setInterval(sync, 30_000)
+    document.addEventListener('visibilitychange', sync)
+    window.addEventListener('online', sync)
+    return () => { clearInterval(timer); document.removeEventListener('visibilitychange', sync); window.removeEventListener('online', sync) }
+  }, [settings.endpoint, settings.token])
 
   // Boot: rebuild interrupted recordings, tidy old audio, then send whatever is waiting.
   useEffect(() => {

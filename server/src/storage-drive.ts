@@ -483,6 +483,25 @@ export class DriveStorage implements NoteStorage {
     return [...ids].filter(id => UUID.test(id)).sort()
   }
 
+  /** Each note is a folder in the person's Drive. A link opens that folder. */
+  async links(userId: string): Promise<Record<string, string>> {
+    checkUser(userId)
+    const state = this.state(userId)
+    const out: Record<string, string> = {}
+    const open = (id: string) => `https://drive.google.com/drive/folders/${encodeURIComponent(id)}`
+    for (const folder of await this.listFiles(userId, `${marker('vbRole', 'note')} and trashed = false`, 'id,appProperties')) {
+      const note = folder.appProperties?.vbNote
+      if (note && UUID.test(note) && !state.tombstones.has(folder.id)) out[note] = open(folder.id)
+    }
+    // A note made a moment ago may not be in Drive's search yet; its meta file still knows the folder it is in.
+    for (const entry of state.recent.values()) {
+      const note = entry.file.appProperties?.vbNote
+      const parent = entry.file.parents?.[0]
+      if (note && parent && UUID.test(note) && !out[note] && entry.file.appProperties?.vbRole === 'meta') out[note] = open(parent)
+    }
+    return out
+  }
+
   async createNote(userId: string, noteId: string, note: NewNote): Promise<boolean> {
     checkUser(userId); checkNote(noteId)
     const files = Object.entries(note.files ?? {})

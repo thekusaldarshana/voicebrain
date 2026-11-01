@@ -89,3 +89,29 @@ export async function fetchAccount(settings: Credentials, fetchImpl: Fetch = fet
     }
   } catch { return null }
 }
+
+export interface ServerNote {
+  id: string
+  /** The name to show: the person's own, else the assistant's rename, else the model's title. */
+  title: string
+  /** The name the person typed (here or on another device). Empty when they never named it. */
+  userTitle: string
+  /** Opens the note's folder in Google Drive, or null when it does not live there. */
+  drive: string | null
+}
+
+/** The names and Drive links the server has for this person's notes. Null when it cannot say right now. */
+export async function fetchServerNotes(settings: Credentials, fetchImpl: Fetch = fetch): Promise<ServerNote[] | null> {
+  try {
+    const response = await call(settings, '/v1/notes', {}, fetchImpl)
+    if (!response.ok) return null
+    const body = (await response.json()) as { notes?: unknown }
+    if (!Array.isArray(body.notes)) return null
+    return body.notes.flatMap((item): ServerNote[] => {
+      const note = item as Partial<ServerNote> | null
+      return note && typeof note.id === 'string' && typeof note.title === 'string'
+        ? [{ id: note.id, title: note.title, userTitle: typeof note.userTitle === 'string' ? note.userTitle : '', drive: typeof note.drive === 'string' && note.drive.startsWith('https://') ? note.drive : null }]
+        : []
+    })
+  } catch { return null }
+}

@@ -1,7 +1,7 @@
 import { mkdirSync } from 'node:fs'
 import { dirname } from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
-import { displayTags, displayTitle } from './titles.ts'
+import { displayTags, displayTitle, userNamed } from './titles.ts'
 import type { Digest, NoteEdits, NoteMeta, Transcript, TaskStatus } from './types.ts'
 import { localParts, slugify } from './util.ts'
 
@@ -37,6 +37,7 @@ export class Index {
       CREATE INDEX IF NOT EXISTS entities_lookup ON entities(kind, slug);
       CREATE INDEX IF NOT EXISTS entities_note ON entities(note_id);
       CREATE TABLE IF NOT EXISTS wiki(path TEXT PRIMARY KEY, title TEXT, updated_at TEXT);
+      CREATE TABLE IF NOT EXISTS note_names(id TEXT PRIMARY KEY, user_title TEXT NOT NULL);
       CREATE VIRTUAL TABLE IF NOT EXISTS docs USING fts5(kind UNINDEXED, ref UNINDEXED, title, body, tokenize = 'porter unicode61');
     `)
   }
@@ -59,6 +60,7 @@ export class Index {
     this.db.exec('BEGIN')
     try {
       this.run('INSERT OR REPLACE INTO notes VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)', meta.id, meta.createdAt, when.date, when.time, title, digest?.summary ?? '', JSON.stringify(tags), meta.source, meta.durationMs, meta.device, vaultPath, digest ? 1 : 0, transcript.suspectedSilence ? 1 : 0)
+      this.run('INSERT OR REPLACE INTO note_names VALUES (?, ?)', meta.id, userNamed(meta, edits))
       this.run('DELETE FROM tasks WHERE note_id = ?', meta.id)
       for (const [idx, task] of (digest?.tasks ?? []).entries()) {
         this.run('INSERT INTO tasks VALUES (?,?,?,?,?,?,?,?,?)', `${meta.id}#${idx}`, meta.id, idx, task.text, task.due, task.project, task.priority, task.quote, meta.createdAt)
@@ -78,7 +80,7 @@ export class Index {
   }
 
   removeNote(id: string) {
-    for (const sql of ['DELETE FROM notes WHERE id = ?', 'DELETE FROM tasks WHERE note_id = ?', 'DELETE FROM entities WHERE note_id = ?']) this.run(sql, id)
+    for (const sql of ['DELETE FROM notes WHERE id = ?', 'DELETE FROM note_names WHERE id = ?', 'DELETE FROM tasks WHERE note_id = ?', 'DELETE FROM entities WHERE note_id = ?']) this.run(sql, id)
     this.run('DELETE FROM docs WHERE kind = ? AND ref = ?', 'note', id)
     this.run('DELETE FROM task_status WHERE id LIKE ?', `${id}#%`)
   }
@@ -113,6 +115,15 @@ export class Index {
   }
 
   wikiPaths(): string[] { return this.all<{ path: string }>('SELECT path FROM wiki ORDER BY path').map(row => row.path) }
+  /** Whether every note has its name row. An index from before names were kept lacks them and is rebuilt once. */
+  namesComplete(): boolean { return (this.get<{ n: number }>('SELECT count(*) AS n FROM notes n WHERE NOT EXISTS (SELECT 1 FROM note_names m WHERE m.id = n.id)') ?? { n: 0 }).n === 0 }
+
+  /** What the app needs to name its notes: the name shown now, and the one the person typed (empty when nobody did). */
+  names(limit = 1000): Array<{ id: string; title: string; userTitle: string }> {
+    return this.all<{ id: string; title: string; user_title: string | null }>('SELECT n.id AS id, n.title AS title, m.user_title AS user_title FROM notes n LEFT JOIN note_names m ON m.id = n.id ORDER BY n.recorded_at DESC LIMIT ?', limit)
+      .map(row => ({ id: row.id, title: row.title, userTitle: row.user_title ?? '' }))
+  }
+
   noteCount(): number { return (this.get<{ n: number }>('SELECT count(*) AS n FROM notes') ?? { n: 0 }).n }
 
   /** Ranked search over notes and wiki pages. Every word must match (prefix match); if nothing does, any word may. */

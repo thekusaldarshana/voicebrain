@@ -24,6 +24,10 @@ export interface Note {
   audioRemoved: boolean
   /** A rename or tag change that has not reached the server yet. */
   editPending?: boolean
+  /** The name the server shows for this note (the assistant's rename, or the model's title). Used when the person gave none. */
+  remoteTitle?: string
+  /** Opens this note's folder in the person's Google Drive. Only when the server keeps notes there. */
+  driveUrl?: string
 }
 
 export interface Settings {

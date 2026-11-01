@@ -25,6 +25,9 @@ export class Store {
   /** Ids of real notes. A folder without meta.json (a half-written or half-deleted note) does not count. */
   ids(): Promise<string[]> { return this.storage.listNotes(this.userId) }
 
+  /** Where each note can be opened (a Drive folder), for backends that have such a place. Empty otherwise. */
+  async links(): Promise<Record<string, string>> { return (await this.storage.links?.(this.userId)) ?? {} }
+
   /** Missing and unreadable JSON both read as null: the caller then does the work again. */
   private async json<T>(id: string, file: string): Promise<T | null> {
     const bytes = await this.storage.get(this.userId, id, file)

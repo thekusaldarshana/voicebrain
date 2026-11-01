@@ -67,7 +67,7 @@ export class Brain {
     let withTranscript = 0
     for (const id of ids) if (await this.store.transcript(id)) withTranscript += 1
     if (process.env.REINDEX === '1') await this.reindex()
-    else if (this.index.noteCount() !== withTranscript) await this.rebuildIndex()
+    else if (this.index.noteCount() !== withTranscript || !this.index.namesComplete()) await this.rebuildIndex()
     else await this.syncWiki()
   }
 
@@ -79,6 +79,12 @@ export class Brain {
    * Rebuilds the search index from the stored notes (and the wiki folder). The vault pages are not rewritten.
    * Cheap enough to run at startup when the index is missing or out of step.
    */
+  /** What the recorder app needs for each note: the name to show, the person's own name for it, and where it lives in Drive. */
+  async namesForApp(): Promise<Array<{ id: string; title: string; userTitle: string; drive: string | null }>> {
+    const links = await this.store.links().catch(() => ({}) as Record<string, string>) // a Drive hiccup must not stop names from syncing
+    return this.index.names().map(note => ({ ...note, drive: links[note.id] ?? null }))
+  }
+
   async rebuildIndex(): Promise<number> { return (await this.rebuild(false)).notes }
 
   /**

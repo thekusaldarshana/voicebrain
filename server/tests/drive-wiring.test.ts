@@ -30,7 +30,7 @@ beforeEach(async () => {
   dir = await tempDir()
   await boot()
 })
-afterEach(async () => { vi.restoreAllMocks(); await server.stop(); await dir.clean() })
+afterEach(async () => { vi.restoreAllMocks(); await server.stop(); drive.purge('alice', 'voicebrain'); await dir.clean() }) // every test starts with an empty Drive
 
 async function connect(browser: Browser) {
   expect((await connectDrive(browser, origin, google, ALICE)).status).toBe(200)
@@ -61,6 +61,21 @@ describe('STORAGE_BACKEND=drive, end to end', () => {
 
     expect((await fetch(`${origin}/v1/notes/${NOTE_ID}`, { method: 'DELETE', headers: { Authorization: `Bearer ${token}` } })).status).toBe(204)
     expect(drive.files('alice').some(file => file.name === NOTE_ID)).toBe(false)
+  })
+
+  it('gives each note a link that opens its folder in Drive, and no link for a note that is not there', async () => {
+    const token = await connectedDevice()
+    expect((await upload(origin, { id: NOTE_ID, token })).status).toBe(201)
+    await waitFor(() => drive.files('alice').some(file => file.name === NOTE_ID), 'the note folder in Alice’s Drive')
+    const folder = drive.files('alice').find(file => file.name === NOTE_ID && file.folder)
+    const listed = (await (await fetch(`${origin}/v1/notes`, { headers: { Authorization: `Bearer ${token}` } })).json()) as { notes: Array<{ id: string; drive: string | null }> }
+    expect(listed.notes).toHaveLength(0) // not digested yet (no workers in this test), so nothing is in the index to name
+    const links = await (server.app as unknown as { brain: { store: { links(): Promise<Record<string, string>> } } }).brain.store.links()
+    expect(links).toEqual({}) // the owner identity has no Drive
+    // The person's own storage, asked directly, links to the very folder Drive made.
+    const { createStorage } = await import('../src/storage-factory.ts')
+    const storage = createStorage(dir.dir, { backend: 'drive', retainAudio: 'keep' }, { driveTokens: server.app.drive as never, driveOptions: { apiBase: drive.apiBase, uploadBase: drive.uploadBase } })
+    expect(await storage.links?.(ALICE.sub)).toEqual({ [NOTE_ID]: `https://drive.google.com/drive/folders/${folder?.id}` })
   })
 
   it('keeps the owner identity’s notes on this disk, because it has no Google account', async () => {

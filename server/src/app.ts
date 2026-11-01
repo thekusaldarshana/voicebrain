@@ -167,6 +167,11 @@ export function createApp(config: Config, options: PipelineOptions = {}, authOpt
     } catch (error) { next(error) }
   })
   app.get('/v1/status', async (_req, res, next) => { try { res.json(await (await tenantOf(res)).pipeline.status()) } catch (error) { next(error) } })
+  // The names the app should show (the person's own, else what the assistant or the model chose) and where each note
+  // lives in Drive. Cheap: it reads the local index, plus one Drive listing for the links.
+  app.get('/v1/notes', async (_req, res, next) => {
+    try { res.setHeader('Cache-Control', 'no-store'); res.json({ notes: await (await tenantOf(res)).brain.namesForApp() }) } catch (error) { next(error) }
+  })
   app.post('/v1/notes', async (req, res, next) => {
     try {
       const mine = await tenantOf(res)

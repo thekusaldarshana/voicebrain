@@ -83,6 +83,12 @@ export interface NoteStorage {
    * note that is gone. A no-op under `keep`.
    */
   releaseAudio(userId: string, noteId: string): Promise<void>
+
+  /**
+   * Optional. Where each note can be opened in the backend's own web interface (a Google Drive folder), by note id.
+   * Notes with no such place are left out. Backends that keep notes as plain files on this machine do not have it.
+   */
+  links?(userId: string): Promise<Record<string, string>>
 }
 
 const USER_ID = /^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$/

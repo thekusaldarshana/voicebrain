@@ -30,7 +30,7 @@ export function LibraryPage() {
   const visible = useMemo(() => {
     const text = query.trim().toLowerCase()
     return notes.filter(note => note.status !== 'recording' && matches(note, filter)
-      && (!text || `${note.title || defaultTitle(note.createdAt)} ${note.tags.join(' ')}`.toLowerCase().includes(text)))
+      && (!text || `${note.title} ${note.remoteTitle ?? ''} ${defaultTitle(note.createdAt)} ${note.tags.join(' ')}`.toLowerCase().includes(text)))
   }, [notes, query, filter])
 
   const groups = useMemo(() => {
