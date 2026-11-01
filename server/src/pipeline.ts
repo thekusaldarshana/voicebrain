@@ -85,6 +85,13 @@ export class Pipeline {
     for (const id of await this.brain.store.ids()) await this.process(id)
   }
 
+  /** Applies the storage's retainAudio policy. Failing to evict a cache is not a reason to fail the note. */
+  private async releaseAudio(id: string): Promise<void> {
+    try { await this.brain.store.releaseAudio(id) } catch (error) {
+      if (!(error instanceof NoteGone)) this.log(`could not release the local audio of ${id.slice(0, 8)}: ${errorText(error)}`)
+    }
+  }
+
   private async process(id: string): Promise<void> {
     const { store, config, index } = this.brain
     const state = await store.state(id)
@@ -92,6 +99,7 @@ export class Pipeline {
     const meta = await store.meta(id)
     if (!meta) return
     let stage: NoteState['stage'] = null
+    let worked = false
     try {
       let transcript = await store.transcript(id)
       if (!transcript) {
@@ -101,6 +109,7 @@ export class Pipeline {
         if (!audio) throw new PermanentError('This note has no audio and no text to work from.')
         transcript = await transcribeBytes(config.stt, audio, meta.audioFile ?? 'audio.webm', meta.mime, this.fetch)
         await store.writeTranscript(id, transcript)
+        worked = true
         await this.brain.fileNote(id) // searchable straight away, even if the language model is down
         this.log(`transcribed ${id.slice(0, 8)} (${transcript.text.length} characters)`)
       }
@@ -110,11 +119,13 @@ export class Pipeline {
         stage = 'digest'
         digest = transcript.suspectedSilence ? silentDigest(meta.title) : await digestNote(config.llm, meta, transcript, index.knownEntities(), this.fetch)
         await store.writeDigest(id, digest)
+        worked = true
         this.log(`digested ${id.slice(0, 8)}: ${digest.tasks.length} task(s)`)
       }
       stage = 'file'
       const row = index.note(id)
       if (!row || (digest && !row.digested)) await this.brain.fileNote(id)
+      if (worked) await this.releaseAudio(id) // transcribed and digested: the storage may now drop its local copy of the audio
       if (state.attempts || state.lastError) await store.writeState(id, { attempts: 0, nextAttemptAt: null, lastError: null, failed: false, stage: null })
     } catch (error) {
       if (error instanceof NoteGone || !(await store.has(id))) return // deleted while we were working on it
