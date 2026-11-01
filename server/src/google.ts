@@ -53,6 +53,7 @@ export class GoogleAuth {
   private keys = new Map<string, KeyObject>()
   private keysAt = 0
   private keysTried = 0
+  private loading: Promise<void> | null = null
 
   constructor(options: GoogleOptions) {
     this.options = options
@@ -108,23 +109,30 @@ export class GoogleAuth {
     return body.id_token
   }
 
+  private async loadKeys(): Promise<void> {
+    this.keysTried = this.now()
+    try {
+      const response = await fetch(this.endpoints.jwks, { signal: AbortSignal.timeout(10_000) })
+      const body = (await response.json()) as { keys?: Array<Record<string, unknown>> }
+      if (!response.ok || !Array.isArray(body.keys)) throw new Error('bad key set')
+      const fresh = new Map<string, KeyObject>()
+      for (const jwk of body.keys) {
+        if (jwk.kty !== 'RSA' || typeof jwk.kid !== 'string') continue
+        try { fresh.set(jwk.kid, createPublicKey({ key: jwk as never, format: 'jwk' })) } catch { /* skip a key we cannot read */ }
+      }
+      this.keys = fresh
+      this.keysAt = this.now()
+    } catch { throw new SignInError(502, 'Could not fetch Google’s signing keys. Try again.') }
+  }
+
   private async key(kid: string): Promise<KeyObject | null> {
     const stale = this.now() - this.keysAt > JWKS_TTL_MS
+    // Sign-ins that arrive while keys are being fetched wait for that one fetch instead of giving up.
+    if (this.loading) await this.loading
     // An unknown key id may mean Google rotated its keys: look again, but not more than once a minute.
-    if ((stale || !this.keys.has(kid)) && this.now() - this.keysTried > JWKS_RETRY_MS) {
-      this.keysTried = this.now()
-      try {
-        const response = await fetch(this.endpoints.jwks, { signal: AbortSignal.timeout(10_000) })
-        const body = (await response.json()) as { keys?: Array<Record<string, unknown>> }
-        if (!response.ok || !Array.isArray(body.keys)) throw new Error('bad key set')
-        const fresh = new Map<string, KeyObject>()
-        for (const jwk of body.keys) {
-          if (jwk.kty !== 'RSA' || typeof jwk.kid !== 'string') continue
-          try { fresh.set(jwk.kid, createPublicKey({ key: jwk as never, format: 'jwk' })) } catch { /* skip a key we cannot read */ }
-        }
-        this.keys = fresh
-        this.keysAt = this.now()
-      } catch { throw new SignInError(502, 'Could not fetch Google’s signing keys. Try again.') }
+    else if ((stale || !this.keys.has(kid)) && this.now() - this.keysTried > JWKS_RETRY_MS) {
+      this.loading = this.loadKeys().finally(() => { this.loading = null })
+      await this.loading
     }
     return this.keys.get(kid) ?? null
   }

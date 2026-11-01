@@ -4,7 +4,7 @@ import { createServer as createNet } from 'node:net'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import type { Config } from '../src/config.ts'
-import { createApp, type App } from '../src/app.ts'
+import { createApp, type App, type AuthOptions } from '../src/app.ts'
 
 export const INGEST = 'test-ingest-token-123'
 export const NOTE_ID = '3f2b1c0e-8a41-4d7e-9b52-0c6d1e2f3a4b'
@@ -117,8 +117,8 @@ export async function waitFor<T>(check: () => T | Promise<T>, what: string, ms =
 
 export interface Running { app: App; base: string; stop: () => Promise<void> }
 
-export async function run(config: Config, fetchImpl: typeof fetch = fetch): Promise<Running> {
-  const app = createApp(config, { fetch: fetchImpl, retryDelay: () => 30, log: () => undefined })
+export async function run(config: Config, fetchImpl: typeof fetch = fetch, auth: AuthOptions = {}): Promise<Running> {
+  const app = createApp(config, { fetch: fetchImpl, retryDelay: () => 30, log: () => undefined }, auth)
   await app.start()
   const port = await app.listen(config.port)
   return { app, base: `http://127.0.0.1:${port}`, stop: () => app.close() }
