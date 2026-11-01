@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
-import { chatGptAddress } from '../src/lib/chatgpt'
+import { readFileSync } from 'node:fs'
+import { CUSTOM_INSTRUCTION, chatGptAddress } from '../src/lib/chatgpt'
 import { DEFAULT_SERVER } from '../src/lib/defaults'
 
 describe('the address given to ChatGPT', () => {
@@ -12,5 +13,20 @@ describe('the address given to ChatGPT', () => {
   it('offers the default server before this device is connected, and never a broken address', () => {
     expect(chatGptAddress('')).toBe(`${DEFAULT_SERVER}/mcp`)
     expect(chatGptAddress('not an address')).toBe(`${DEFAULT_SERVER}/mcp`)
+  })
+})
+
+describe('the instruction pasted into ChatGPT', () => {
+  const tools = [...readFileSync(new URL('../server/src/mcp.ts', import.meta.url), 'utf8').matchAll(/registerTool\('([a-z_]+)'/g)].map(match => match[1])
+
+  it('only names tools the server really has', () => {
+    const named = [...CUSTOM_INSTRUCTION.matchAll(/\b(brief|search|recent|open_loops|get_note|update_task|rename_note|add_note|list_wiki|read_wiki|write_wiki)\b/g)].map(match => match[1])
+    expect(named.length).toBeGreaterThan(3)
+    for (const name of named) expect(tools, name).toContain(name)
+  })
+
+  it('is short enough for ChatGPT’s custom instructions and says what plugin it is about', () => {
+    expect(CUSTOM_INSTRUCTION.length).toBeLessThan(1500)
+    expect(CUSTOM_INSTRUCTION).toContain('voicebrain')
   })
 })

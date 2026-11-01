@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react'
 import { useNotes, useSettings, useToast } from '../lib/hooks'
 import { isConfigured, isPrivateAddress, normalizeEndpoint } from '../lib/endpoint'
 import { formatBytes } from '../lib/format'
-import { retryFailed } from '../lib/notes'
+import { KEEP_NEWEST, pickNewestAudio, removeNewestAudio, retryFailed } from '../lib/notes'
 import { kickUploads, pingServer } from '../lib/uploader'
 import { ChatGptCard } from '../components/ChatGptCard'
 import { ConnectCard } from '../components/ConnectCard'
@@ -27,6 +27,8 @@ export function SettingsPage({ installPrompt }: { installPrompt: InstallEvent | 
   const endpoint = endpointDraft ?? settings.endpoint
   const token = tokenDraft ?? settings.token
   const [showToken, setShowToken] = useState(false)
+  const [limitDraft, setLimitDraft] = useState<string | null>(null)
+  const [confirmingNewest, setConfirmingNewest] = useState(false)
   const [testing, setTesting] = useState(false)
   const [result, setResult] = useState<{ ok: boolean; message: string } | null>(null)
   const [devices, setDevices] = useState<MediaDeviceInfo[]>([])
@@ -147,6 +149,28 @@ export function SettingsPage({ installPrompt }: { installPrompt: InstallEvent | 
           <div><dt>Audio stored</dt><dd>{formatBytes(audioBytes)}</dd></div>
           {storage && storage.quota > 0 && <div><dt>Browser storage used</dt><dd>{formatBytes(storage.usage)} of {formatBytes(storage.quota)}</dd></div>}
         </dl>
+        <label className="field">
+          <span className="field-label">Free up space when the audio on this device passes (MB)</span>
+          <input type="number" inputMode="numeric" min={0} step={50} value={limitDraft ?? String(settings.storageLimitMb)} aria-describedby="limit-hint"
+            onChange={event => setLimitDraft(event.target.value)}
+            onBlur={() => { if (limitDraft !== null) { const value = Math.max(0, Math.round(Number(limitDraft))); set({ storageLimitMb: Number.isFinite(value) ? value : settings.storageLimitMb }); setLimitDraft(null) } }}
+            onKeyDown={event => { if (event.key === 'Enter') event.currentTarget.blur() }} />
+          <span className="hint" id="limit-hint">Default 250. The oldest recordings go first, and only ones already safe on your server. The newest {KEEP_NEWEST} notes always keep their audio. Notes stay in your Library; only the audio file on this device is removed. Type 0 to turn this off.</span>
+        </label>
+        {(() => {
+          const newest = pickNewestAudio(notes)
+          return <div className="row-actions">
+            <button type="button" className={`secondary-button${confirmingNewest ? ' danger' : ''}`} disabled={newest.length === 0}
+              onClick={async () => {
+                if (!confirmingNewest) { setConfirmingNewest(true); setTimeout(() => setConfirmingNewest(false), 6000); return }
+                setConfirmingNewest(false)
+                const count = await removeNewestAudio()
+                toast(`Removed the audio of ${count} recent ${count === 1 ? 'note' : 'notes'} from this device. Your server still has them.`)
+              }}>
+              {confirmingNewest ? `Tap again to remove ${newest.length}` : `Also free the latest ${KEEP_NEWEST} recordings`}
+            </button>
+          </div>
+        })()}
         {persisted === false && <>
           <p className="hint">The browser may clear this device’s data when space is low. Ask it to keep your notes until they are uploaded.</p>
           <div className="row-actions"><button type="button" className="secondary-button" onClick={async () => { const granted = await navigator.storage.persist(); setPersisted(granted); toast(granted ? 'Storage will be kept.' : 'The browser declined. Installing the app usually helps.') }}>Keep my data</button></div>

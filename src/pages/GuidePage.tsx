@@ -112,6 +112,7 @@ export function GuidePage() {
           <dt>Notes show “Waiting”.</dt><dd>They are saved on your phone and upload when you are online and signed in. Open Settings to check you are signed in.</dd>
           <dt>“Google Drive is not connected.”</dt><dd>Open Settings and tap Connect Google Drive. This also happens if you removed voicebrain’s access in your Google account.</dd>
           <dt>ChatGPT cannot see my notes.</dt><dd>Check voicebrain is listed under Installed on ChatGPT’s Plugins page, and that you signed in with the same Google account as here. Try asking “Using voicebrain, …”.</dd>
+          <dt>ChatGPT only uses voicebrain when I ask it to.</dt><dd>Add the custom instruction from step 5 (Personalization → Custom instructions). Until then you can always say “Using voicebrain, …”.</dd>
           <dt>ChatGPT does not know about a new feature.</dt><dd>Open the Plugins page and press the refresh button next to Add.</dd>
           <dt>The app looks old.</dt><dd>Close it completely and open it again. It updates itself in the background.</dd>
         </dl>

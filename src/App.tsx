@@ -5,7 +5,7 @@ import { parsePairing } from './lib/endpoint'
 import { useNotes, useOnline, useSettings, useToast } from './lib/hooks'
 import { SettingsProvider, ToastProvider } from './lib/providers'
 import { syncNames } from './lib/names'
-import { purgeUploadedAudio } from './lib/notes'
+import { purgeToLimit, purgeUploadedAudio } from './lib/notes'
 import { recoverInterrupted } from './lib/recovery'
 import { kickUploads } from './lib/uploader'
 import { GuidePage } from './pages/GuidePage'
@@ -62,6 +62,9 @@ function Shell() {
     window.addEventListener('online', sync)
     return () => { clearInterval(timer); document.removeEventListener('visibilitychange', sync); window.removeEventListener('online', sync) }
   }, [settings.endpoint, settings.token])
+
+  // Keep the audio on this device under the person's limit (oldest first, the newest notes stay).
+  useEffect(() => { void purgeToLimit(settings.storageLimitMb).catch(() => 0) }, [notes, settings.storageLimitMb])
 
   // Boot: rebuild interrupted recordings, tidy old audio, then send whatever is waiting.
   useEffect(() => {

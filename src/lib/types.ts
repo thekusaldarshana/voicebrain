@@ -40,6 +40,8 @@ export interface Settings {
   autoUpload: boolean
   /** Days the audio stays on this device after upload. 0 removes it straight away, -1 keeps it. */
   keepAfterUpload: number
+  /** Free up the oldest audio on this device when it adds up to more than this many MB. 0 turns it off. */
+  storageLimitMb: number
   /** Opus bits per second. */
   bitrate: number
   echoCancellation: boolean
@@ -66,6 +68,7 @@ export const DEFAULT_SETTINGS: Settings = {
   deviceName: typeof navigator === 'undefined' ? 'This device' : guessDeviceName(navigator.userAgent),
   autoUpload: true,
   keepAfterUpload: 7,
+  storageLimitMb: 250,
   bitrate: 32000,
   echoCancellation: false,
   noiseSuppression: true,

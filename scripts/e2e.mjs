@@ -347,7 +347,7 @@ await step('one tap connects a new device: the app gets a code, opens the approv
   await popup.locator('input[name=passphrase]').fill(PASSPHRASE)
   await popup.getByRole('button', { name: 'Approve' }).click()
   await popup.getByText('Device connected').waitFor()
-  await tablet.getByText('Connected', { exact: false }).first().waitFor({ timeout: 20_000 }) // nothing was copied or pasted
+  await tablet.getByRole('button', { name: 'Sign out of this device' }).waitFor({ timeout: 20_000 }) // nothing was copied or pasted; this button only exists once the device is connected
   const devices = await serverDevices()
   assert.equal(devices.length, before + 1)
   await tablet.screenshot({ path: join(shots, '12-connected.png'), fullPage: true })
@@ -403,6 +403,47 @@ await step('disconnecting cuts this device off on the server', async () => {
   await tablet.context().close()
 })
 
+await step('frees old audio past the size limit (the newest 5 stay), and the button frees the latest 5 too', async () => {
+  const fresh = await browser.newContext({ viewport: { width: 390, height: 844 }, deviceScaleFactor: 2 })
+  const page = await fresh.newPage()
+  watch(page)
+  await page.goto(`${APP}/`)
+  await page.getByRole('heading', { name: 'Record', level: 1 }).waitFor()
+  // Eight notes that reached the server, 100 MB each (n1 the oldest): 800 MB on a device whose limit is 250.
+  const seed = () => page.evaluate(async () => {
+    const db = await new Promise((resolve, reject) => { const request = indexedDB.open('trapper-voice'); request.onsuccess = () => resolve(request.result); request.onerror = () => reject(request.error) })
+    const tx = db.transaction('notes', 'readwrite')
+    for (let n = 1; n <= 8; n += 1) {
+      tx.objectStore('notes').put({ id: `n${n}`, createdAt: Date.now() - (9 - n) * 3_600_000, durationMs: 60_000, mime: 'audio/webm', size: 100 * 1024 * 1024, title: `Note ${n}`, tags: [], marks: [], status: 'uploaded', attempts: 0, nextAttemptAt: null, lastError: null, uploadedAt: Date.now(), recovered: false, source: 'record', audioRemoved: false })
+    }
+    await new Promise(resolve => { tx.oncomplete = resolve })
+  })
+  const removed = () => page.evaluate(async () => {
+    const db = await new Promise(resolve => { const request = indexedDB.open('trapper-voice'); request.onsuccess = () => resolve(request.result) })
+    const all = await new Promise(resolve => { const request = db.transaction('notes').objectStore('notes').getAll(); request.onsuccess = () => resolve(request.result) })
+    return all.filter(note => note.audioRemoved).map(note => note.id).sort()
+  })
+  await seed()
+  await page.reload()
+  await until(async () => (await removed()).join() === 'n1,n2,n3', 'the three oldest notes to lose their audio')
+  assert.deepEqual(await removed(), ['n1', 'n2', 'n3']) // n4..n8 are the newest five and stay, even though 500 MB is over the limit
+
+  await page.goto(`${APP}/#/settings`)
+  const limit = page.getByLabel('Free up space when the audio on this device passes (MB)')
+  assert.equal(await limit.inputValue(), '250')
+  await page.getByRole('button', { name: 'Also free the latest 5 recordings' }).click()
+  await page.getByRole('button', { name: 'Tap again to remove 5' }).click()
+  await until(async () => (await removed()).length === 8, 'the latest five to lose their audio too')
+
+  // Typing a new limit takes effect when the field is left, not on every key: a half-typed "2" must not delete anything.
+  await seed()
+  await limit.fill('0')
+  await limit.blur()
+  await until(async () => (await page.evaluate(() => new Promise(resolve => { const request = indexedDB.open('trapper-voice'); request.onsuccess = () => { const get = request.result.transaction('kv').objectStore('kv').get('settings'); get.onsuccess = () => resolve(get.result?.storageLimitMb) } }))) === 0, 'the limit 0 to be saved')
+  await page.screenshot({ path: join(shots, '15-storage-limit.png') })
+  await fresh.close()
+})
+
 await step('the ChatGPT card hands over this server’s address, and the user guide opens and fits a small screen', async () => {
   const fresh = await browser.newContext({ viewport: { width: 390, height: 844 }, permissions: ['clipboard-read', 'clipboard-write'], deviceScaleFactor: 2 })
   const page = await fresh.newPage()
@@ -412,9 +453,12 @@ await step('the ChatGPT card hands over this server’s address, and the user gu
   await page.getByText('Paired. Use “Test connection” to check it.').waitFor() // the link has been applied, so the card knows this server
   assert.equal(await page.getByLabel('Address to give ChatGPT').inputValue(), `${ENDPOINT}/mcp`)
   await page.getByText('in the ChatGPT desktop app').first().waitFor()
-  await page.getByRole('button', { name: 'Copy' }).click()
+  await page.getByRole('button', { name: 'Copy', exact: true }).click()
   await page.getByText('Address copied. Paste it into ChatGPT.').waitFor()
   assert.equal(await page.evaluate(() => navigator.clipboard.readText()), `${ENDPOINT}/mcp`)
+  await page.getByRole('button', { name: 'Copy instruction' }).click()
+  await page.getByText('Instruction copied.').waitFor()
+  assert.match(await page.evaluate(() => navigator.clipboard.readText()), /^I use a plugin called voicebrain\./)
   await page.getByRole('link', { name: 'Open the user guide' }).click()
   await page.getByRole('heading', { name: 'User guide', level: 1 }).waitFor()
   for (const name of ['1. Sign in', '2. Record a note', '5. Connect ChatGPT', '8. Who can see your notes']) await page.getByRole('heading', { name }).waitFor()
