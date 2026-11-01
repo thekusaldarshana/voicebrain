@@ -176,7 +176,7 @@ Check it is alive: `docker compose exec stt python -c "import urllib.request; pr
 | `STT_PROVIDER`, `STT_BASE_URL`, `STT_API_KEY`, `STT_MODEL`, `STT_LANGUAGE`, `STT_PROMPT`, `STT_MAX_MB` | `gemini` (Google's API) or any OpenAI-compatible `/audio/transcriptions` server. `*_API_KEY` may list several keys, comma separated |
 | `LLM_BASE_URL`, `LLM_API_KEY`, `LLM_MODEL`, `LLM_MAX_INPUT_CHARS` | Any OpenAI-compatible `/chat/completions` server |
 | `ALLOWED_ORIGIN` | CORS origin for the recorder app (default `*`) |
-| `STORAGE_BACKEND` | Where the notes (audio, transcripts, digests) are kept. Only `local` exists today (files under `DATA_DIR/inbox/`); see *Storage* below |
+| `STORAGE_BACKEND`, `DRIVE_RETAIN_AUDIO` | Where the notes (audio, transcripts, digests) are kept: `local` (default, files under `DATA_DIR/inbox/`) or `drive` (each user's own Google Drive). `DRIVE_RETAIN_AUDIO` is `keep` (default) or `drop-after-digest`. See *Storage* below |
 | `DATA_DIR`, `PORT`, `HOST`, `MAX_UPLOAD_MB`, `MAX_ATTEMPTS`, `GIT`, `WORKER`, `REINDEX` | Defaults are fine |
 
 Without `STT_BASE_URL` or `LLM_BASE_URL` the server still accepts and stores notes; `GET /v1/status` (and the startup log) says what is missing.
@@ -192,7 +192,7 @@ Everything lives in `data/`:
 
 ## Storage
 
-Everything the server must not lose goes through one interface, `NoteStorage` (`src/storage.ts`), so notes can live somewhere other than this machine's disk (a Google Drive backend is the next step). Everything else is derived and disposable.
+Everything the server must not lose goes through one interface, `NoteStorage` (`src/storage.ts`), so notes can live somewhere other than this machine's disk (`local` disk or each user's own Google Drive). Everything else is derived and disposable.
 
 | | What | Where |
 |---|---|---|
@@ -201,7 +201,7 @@ Everything the server must not lose goes through one interface, `NoteStorage` (`
 | **Derived, rebuildable** | the vault pages (`notes/`, `daily/`, `projects/`, `people/`, `tasks.md`) and the search index (`index.sqlite`) | local disk |
 | Not derived, not in storage yet | `wiki/` and `vault/state/task-status.json` | the vault (git) |
 
-`LocalStorage` is the only backend. It keeps the layout the server has always used (`data/inbox/<id>/…`) and stores the owner's notes there; every call carries a user id (today always `owner`) so other users could get their own space later (`data/users/<id>/inbox/`). Writes are atomic (a reader sees the old file or the new one), a note appears complete or not at all, and a delete hides the note in one step before removing its files, so a write that finishes after a delete fails with `NoteGone` instead of bringing the note back.
+`LocalStorage` is the default backend. It keeps the layout the server has always used (`data/inbox/<id>/…`) and stores the owner's notes there; every call carries a user id (today always `owner`) so other users could get their own space later (`data/users/<id>/inbox/`). Writes are atomic (a reader sees the old file or the new one), a note appears complete or not at all, and a delete hides the note in one step before removing its files, so a write that finishes after a delete fails with `NoteGone` instead of bringing the note back.
 
 **`retainAudio`** (`keep`, or `drop-after-digest`) is for backends that hold a durable copy elsewhere: once a note is transcribed and digested, the backend may evict its local copy of the audio and fetches it back when it is played or transcribed again. `LocalStorage` refuses `drop-after-digest`, because there its disk holds the only copy.
 
@@ -213,7 +213,43 @@ docker compose exec voicebrain node src/main.ts reindex     # or: REINDEX=1 in .
 
 This rewrites the search index and every generated vault page, and removes generated pages that no stored note explains. It never touches `wiki/`, `state/` or the stored notes. It is safe to run any time; stopping the server first avoids a moment where search is partly rebuilt.
 
-Adding a backend: implement `NoteStorage`, then run the shared contract suite against it (`tests/storage-contract.ts`, used by `tests/storage.test.ts` for `LocalStorage` and an in-memory fake). Anything that passes it behaves like the disk.
+### Google Drive (`STORAGE_BACKEND=drive`)
+
+Each user's notes live in **their own Drive**, through the Drive v3 REST API with the narrow `drive.file` scope: the app only ever sees files it created. In the user's Drive:
+
+```
+voicebrain/                  created by the app; found again by a hidden marker (appProperties), never by name
+  <note id>/                 one folder per note
+    meta.json  audio.<ext>  transcript.json  digest.json  edits.json
+```
+
+- **A note appears complete or not at all.** `meta.json` is uploaded last and a note exists once it does, so a half-uploaded recording is invisible, and a failed upload removes what it made. A crash that leaves a half-made note is cleaned up the next time that note is created.
+- **Audio streams.** Recordings go up as resumable uploads in 8 MB pieces (memory is one piece, not the file) and resume from what Drive has after a dropped connection. JSON goes up as a single request.
+- **Delete is permanent** (`files.delete`, not the trash), removes the note's folder and everything in it, and wins against a write still in flight: that write fails with `NoteGone` and removes what it made.
+- **Failures.** A 401 gets one fresh token and a retry; a second 401 means access was revoked and surfaces as `DriveNotConnected`, as does a user who never connected (the sign-in side supplies the tokens through `DriveTokenProvider`, `src/drive-tokens.ts`). 429, 5xx, dropped connections and the 403s that mean "slow down" are retried six times with exponential backoff (0.5 s doubling, capped at 30 s) and `Retry-After` (up to two minutes). Quota-full (`storageQuotaExceeded`) is not retried. Error messages never contain tokens, file names or note text.
+- **On this machine** (`DATA_DIR/cache/drive/<user>/<note>/`): the audio working copy, and `state.json` (retry counters, not worth a Drive call). With `DRIVE_RETAIN_AUDIO=keep` the working copy stays; with `drop-after-digest` it is deleted once the note is transcribed and digested, and fetched back into a temporary file, deleted after use, when the audio is played or transcribed again. Either way the recording is safe in Drive.
+- **Wiring:** `createStorage(dataDir, settings, { driveTokens })` builds it; the Drive token provider has to be passed in where the `Brain` is constructed (`new Brain(config, now, createStorage(...))`). Without one, `STORAGE_BACKEND=drive` stops at startup with a message saying so.
+
+Drive calls per operation (what the tests count):
+
+| Operation | Calls |
+|---|---|
+| List the ids of all notes | 1 per 1,000 notes |
+| Does this note exist / list its files | 1 (a note's file list is reused for 3 s) |
+| Read a JSON file | 0 if read or written here in the last 10 min, else 1 download (+1 list) |
+| Read `state.json` | 0 (local) |
+| Read audio | 0 if the working copy is here, else 1 download |
+| Write a JSON file | 3 (list, upload, check the note is still there) |
+| Write audio | 3 + one per 8 MB |
+| Store a new upload with audio | 4 + one per 8 MB (+2 the first time, for the app folder) |
+| Delete a note | 2 |
+| One idle pass of the pipeline | 1 (the list of ids; everything else is remembered) |
+
+**Rebuilding from Drive** (`node src/main.ts reindex`) makes one list per 1,000 notes, then per note one list and one download each of `meta.json`, `transcript.json`, `digest.json` and, if present, `edits.json`: about **4 to 5 calls per note**, no audio and no writes to Drive. Four notes are read at a time. The test suite confirms the count (14 calls to rebuild 3 notes) but no real Google call has been made anywhere, so the time is an estimate: at 150 to 300 ms per call that is roughly 0.2 to 0.5 s per note, so **about 4 to 8 minutes for 1,000 notes**. Drive's request limits are in the thousands per minute per user (check your project's quota page); a 1,000-note rebuild is about 5,000 calls and is slowed down, not broken, if Google answers 429. A server with an empty disk can be pointed at the same Drive and rebuilt this way; task statuses and `wiki/` are not in Drive (see the table above), so they are not restored.
+
+Caveats: Drive's search index lags behind writes by seconds, so this process trusts what it wrote or deleted itself for ten minutes before believing a listing. It assumes **one server instance per user's folder**: locks are per process, so two instances racing to create the same note could make a duplicate (reads tolerate duplicates, but you would have to tidy them in Drive). Audio counts against the user's own Drive storage, and a user who removes the app's access, or deletes the `voicebrain` folder, will see the server report `DriveNotConnected` or start a fresh folder.
+
+Adding a backend: implement `NoteStorage`, then run the shared contract suite against it (`tests/storage-contract.ts`, used by `tests/storage.test.ts` for `LocalStorage`, an in-memory fake and `DriveStorage` against an in-process fake Drive, `tests/fake-drive.ts`). Anything that passes it behaves like the disk.
 
 ## People and their notes
 

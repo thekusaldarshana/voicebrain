@@ -92,13 +92,19 @@ export function loadConfig(env: Record<string, string | undefined> = process.env
 
 // ---- where notes are stored (separate from the rest of the config on purpose, so it merges cleanly) ----
 
-export interface StorageConfig {
+export type StorageConfig =
   /** `local` keeps notes as files under DATA_DIR/inbox. */
-  backend: 'local'
-}
+  | { backend: 'local' }
+  /** `drive` keeps them in each user's own Google Drive (the `drive.file` scope). `retainAudio` is DRIVE_RETAIN_AUDIO. */
+  | { backend: 'drive'; retainAudio: 'keep' | 'drop-after-digest' }
 
 export function loadStorageConfig(env: Record<string, string | undefined> = process.env): StorageConfig {
   const backend = (env.STORAGE_BACKEND ?? '').trim() || 'local'
-  if (backend !== 'local') throw new Error(`STORAGE_BACKEND "${backend}" is not available. The only backend is "local".`)
-  return { backend }
+  if (backend === 'local') return { backend }
+  if (backend === 'drive') {
+    const retainAudio = (env.DRIVE_RETAIN_AUDIO ?? '').trim() || 'keep'
+    if (retainAudio !== 'keep' && retainAudio !== 'drop-after-digest') throw new Error('DRIVE_RETAIN_AUDIO must be "keep" or "drop-after-digest".')
+    return { backend, retainAudio }
+  }
+  throw new Error(`STORAGE_BACKEND "${backend}" is not available. Use "local" or "drive".`)
 }
