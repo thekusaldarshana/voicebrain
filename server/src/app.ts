@@ -2,8 +2,10 @@ import { timingSafeEqual } from 'node:crypto'
 import type { Server } from 'node:http'
 import express, { type NextFunction, type Request, type Response } from 'express'
 import { mcpAuthRouter } from '@modelcontextprotocol/sdk/server/auth/router.js'
+import { InvalidTokenError } from '@modelcontextprotocol/sdk/server/auth/errors.js'
 import { requireBearerAuth } from '@modelcontextprotocol/sdk/server/auth/middleware/bearerAuth.js'
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js'
+import { AgentKeys, KEY_PREFIX } from './agent-keys.ts'
 import { createAuth, messagePage } from './auth.ts'
 import { DriveAccounts, TokenCipher } from './drive.ts'
 import { DriveNotConnected, type DriveTokenProvider } from './drive-tokens.ts'
@@ -60,7 +62,9 @@ export function createApp(config: Config, options: PipelineOptions = {}, authOpt
     : {})
   const { brain, pipeline } = tenants.owner
   const google = mode === 'google' ? new GoogleAuth({ clientId: config.googleClientId, clientSecret: config.googleClientSecret, redirectUri: `${config.publicUrl}/auth/google/callback`, ...(drive ? { driveRedirectUri: `${config.publicUrl}/auth/drive/callback` } : {}), ...(authOptions.googleEndpoints ? { endpoints: authOptions.googleEndpoints } : {}) }) : null
-  const authKit = google ? createAuth({ users, google, publicUrl: config.publicUrl, drive }) : null
+  // Personal keys for coding agents (Claude Code, Cursor, opencode, Codex): only with Google sign-in, where there are people to own them.
+  const agentKeys = mode === 'google' ? new AgentKeys(join(config.dataDir, 'agent-keys.sqlite')) : null
+  const authKit = google ? createAuth({ users, google, publicUrl: config.publicUrl, drive, agentKeys }) : null
   // Pairing needs a way to approve (a signed-in person, or the passphrase) and a public address (to show the approval page).
   const pairing = mode !== 'none' && config.publicUrl ? new Pairing({ devices, passphrase: mode === 'passphrase' ? config.ownerPassphrase : '', publicUrl: config.publicUrl, isActive: id => users.isActive(id) }) : null
 
@@ -246,9 +250,20 @@ export function createApp(config: Config, options: PipelineOptions = {}, authOpt
   const mcpUrl = config.publicUrl ? `${config.publicUrl}/mcp` : ''
   if (mode !== 'none' || config.mcpToken) {
     const approver: Approver | null = authKit ? { kind: 'google', userOf: req => authKit.userOf(req), signInUrl: authKit.signInUrl, originOk: authKit.originOk } : mode === 'passphrase' ? { kind: 'passphrase', passphrase: config.ownerPassphrase } : null
-    const verifier = approver
+    const base = approver
       ? (provider = new OwnerOAuthProvider({ dbPath: join(config.dataDir, 'auth.sqlite'), approver, staticToken: config.mcpToken, isActive: id => users.isActive(id) }))
       : staticTokenVerifier(config.mcpToken)
+    // A personal key (vbk_...) is checked first; anything else is an OAuth token or the static token, as before.
+    const verifier = {
+      async verifyAccessToken(value: string) {
+        if (agentKeys && value.startsWith(KEY_PREFIX)) {
+          const hit = agentKeys.verify(value)
+          if (!hit || !users.isActive(hit.userId)) throw new InvalidTokenError('Invalid or revoked key')
+          return { token: value, clientId: 'agent-key', scopes: ['mcp'], expiresAt: Math.floor(Date.now() / 1000) + 3600, extra: { userId: hit.userId } }
+        }
+        return base.verifyAccessToken(value)
+      },
+    }
     if (provider) {
       const issuerUrl = new URL(config.publicUrl)
       app.use(mcpAuthRouter({
@@ -305,6 +320,7 @@ export function createApp(config: Config, options: PipelineOptions = {}, authOpt
       await new Promise<void>(done => { if (!http) { done(); return } http.closeAllConnections?.(); http.close(() => done()) })
       provider?.close()
       drive?.close()
+      agentKeys?.close()
       users.close()
       devices.close()
       await tenants.close()

@@ -1,4 +1,5 @@
 import type { Config } from './config.ts'
+import { runCli } from './llm-cli.ts'
 import type { Fetch } from './stt.ts'
 import type { Digest, Mention, NoteMeta, Priority, Quoted, Task, Transcript } from './types.ts'
 import { PermanentError, errorText, localParts, slugify, withKeys } from './util.ts'
@@ -109,8 +110,41 @@ export function extractJson(content: string): unknown {
   return JSON.parse(fenced.slice(start, end + 1))
 }
 
-/** Any OpenAI-compatible `/chat/completions` server. */
+const retryableStatus = (status: number) => status === 408 || status === 425 || status === 429 || status === 529 || status >= 500
+
+/** Anthropic's Messages API. */
+async function anthropicJson(config: Llm, system: string, user: string, fetchImpl: Fetch): Promise<unknown> {
+  let response: Response
+  try {
+    response = await withKeys(config.apiKey, key => fetchImpl(`${config.baseUrl}/v1/messages`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'x-api-key': key, 'anthropic-version': '2023-06-01' },
+      body: JSON.stringify({ model: config.model, max_tokens: 8192, temperature: 0.1, system, messages: [{ role: 'user', content: user }] }),
+      signal: AbortSignal.timeout(5 * 60_000),
+    }))
+  } catch (error) { throw new Error(`Language model unreachable: ${errorText(error)}`) }
+  if (!response.ok) {
+    const detail = (await response.text().catch(() => '')).slice(0, 300)
+    const message = `Language model answered ${response.status}. ${detail}`.trim()
+    throw retryableStatus(response.status) ? new Error(message) : new PermanentError(message)
+  }
+  const body = (await response.json()) as { content?: Array<{ type?: string; text?: string }> }
+  const content = (body.content ?? []).filter(part => part.type === 'text').map(part => part.text ?? '').join('\n').trim()
+  if (!content) throw new Error('The language model returned an empty reply.')
+  return extractJson(content)
+}
+
+/** An agent program installed on this machine (Claude Code, Codex, opencode...). */
+async function cliJson(config: Llm, system: string, user: string): Promise<unknown> {
+  const output = await runCli(config.command ?? [], `${system}\n\n${user}\n\nReply with only the JSON object, nothing else.`)
+  if (!output.trim()) throw new Error(`${config.command?.[0] ?? 'The command'} printed nothing.`)
+  return extractJson(output)
+}
+
+/** Asks the configured model for JSON: an OpenAI-compatible `/chat/completions` server, Anthropic, or a local agent command. */
 export async function chatJson(config: Llm, system: string, user: string, fetchImpl: Fetch = fetch): Promise<unknown> {
+  if (config.provider === 'anthropic') return anthropicJson(config, system, user, fetchImpl)
+  if (config.provider === 'cli') return cliJson(config, system, user)
   const call = async (withFormat: boolean) => withKeys(config.apiKey, key => fetchImpl(`${config.baseUrl}/chat/completions`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', ...(key ? { Authorization: `Bearer ${key}` } : {}) },
@@ -131,7 +165,7 @@ export async function chatJson(config: Llm, system: string, user: string, fetchI
   if (!response.ok) {
     const detail = (await response.text().catch(() => '')).slice(0, 300)
     const message = `Language model answered ${response.status}. ${detail}`.trim()
-    const retryable = response.status === 408 || response.status === 425 || response.status === 429 || response.status >= 500
+    const retryable = retryableStatus(response.status)
     throw retryable ? new Error(message) : new PermanentError(message)
   }
   const body = (await response.json()) as { choices?: Array<{ message?: { content?: string } }> }

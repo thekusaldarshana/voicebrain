@@ -2,6 +2,7 @@ import { adoptOwner } from './adopt.ts'
 import { createApp } from './app.ts'
 import { Brain } from './brain.ts'
 import { authMode, loadConfig } from './config.ts'
+import { digestNote } from './digest.ts'
 
 function pair(argv: string[]) {
   const get = (name: string) => { const at = argv.indexOf(`--${name}`); return at >= 0 ? (argv[at + 1] ?? '') : '' }
@@ -25,6 +26,17 @@ async function reindex() {
   } finally { brain.close() }
 }
 
+/** Sends a made-up note through the configured model, so a wrong key, model name or command shows up now and not on a real note. */
+async function llmTest() {
+  const config = loadConfig()
+  if (!config.llm) { console.error('No model is set, so ChatGPT (or another assistant, over MCP) sorts the notes. To sort them on the server, set LLM_PROVIDER in .env (see .env.example).'); process.exit(2) }
+  const text = 'Remind me to call the bank tomorrow morning. I also had an idea: a weekly review screen for the app. Maybe next Friday I should email Priya about the budget.'
+  const meta = { id: '00000000-0000-4000-8000-000000000000', createdAt: new Date().toISOString(), title: '', timezone: config.ownerTimezone, utcOffsetMinutes: 0 }
+  const digest = await digestNote(config.llm, meta as never, { text } as never, { projects: [], people: [] })
+  console.log(JSON.stringify(digest, null, 2))
+  console.log(`\nworked: ${digest.tasks.length} task(s), ${digest.ideas.length} idea(s), ${digest.droppedItems} dropped (provider ${config.llm.provider ?? 'openai'}, model ${config.llm.model})`)
+}
+
 /** Gives the owner identity's notes, vault, devices and assistant connections to one Google account. */
 function adopt(argv: string[]) {
   const email = argv.find(arg => !arg.startsWith('--')) ?? ''
@@ -38,6 +50,7 @@ async function main() {
   if (process.argv[2] === 'pair') return pair(process.argv.slice(3))
   if (process.argv[2] === 'reindex') return reindex()
   if (process.argv[2] === 'adopt-owner') return adopt(process.argv.slice(3))
+  if (process.argv[2] === 'llm-test') return llmTest()
   const config = loadConfig()
   const app = createApp(config)
   await app.start()
@@ -46,7 +59,7 @@ async function main() {
   console.log(`voicebrain listening on :${port}, data in ${config.dataDir}`)
   on('upload from the recorder app', true, '')
   on('transcription', config.stt !== null, 'set STT_BASE_URL')
-  console.log(config.llm ? '  on   sorting notes with your own model server (LLM_BASE_URL); ChatGPT can sort too' : '  on   sorting notes by ChatGPT, through the MCP tools (no model or API key on this server)')
+  console.log(config.llm ? `  on   sorting notes on this server: ${config.llm.provider === 'cli' ? `the command ${config.llm.command?.[0]}` : config.llm.provider === 'anthropic' ? 'Anthropic' : 'an OpenAI-compatible model'} (${config.llm.model}). ChatGPT or any MCP assistant can sort too` : '  on   sorting notes by an assistant over MCP (ChatGPT, Claude Code...). Set LLM_PROVIDER to sort on this server instead')
   const mode = authMode(config)
   on('sign-in with Google', mode === 'google', 'set GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET and PUBLIC_URL')
   if (mode === 'google') console.log(config.allowedEmails.length ? `        only ${config.allowedEmails.length} allowed email address${config.allowedEmails.length === 1 ? '' : 'es'} can sign in` : '        no ALLOWED_EMAILS: the first person to sign in claims this server')

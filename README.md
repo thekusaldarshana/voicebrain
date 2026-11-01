@@ -4,7 +4,7 @@ Record a voice note. When you tap **Stop**, everything after that happens on its
 
 It is a PWA (installable on Android, desktop and iPhone) built the same way as Trapper: Vite, React 19, TypeScript, the shared `tokens.css` design system, and a Tauri shell for desktop.
 
-The other half is `server/`: it receives the uploads, transcribes them on its own machine with Whisper, keeps a versioned markdown vault, and lets ChatGPT read it, and sort the notes into tasks and ideas, over MCP. There is no other AI service and no API key to look after. See [`server/README.md`](server/README.md).
+The other half is `server/`: it receives the uploads, transcribes them on its own machine with Whisper, keeps a versioned markdown vault, and lets any MCP assistant (ChatGPT, Claude Code, Cursor, opencode, Codex) read it. Sorting notes into tasks and ideas is done by your assistant, or by an API key or agent program you choose; by default there is no key on the server. See [`server/README.md`](server/README.md).
 
 ## What it does
 

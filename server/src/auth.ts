@@ -1,4 +1,5 @@
-import { Router, type Request, type Response } from 'express'
+import express, { Router, type Request, type Response } from 'express'
+import type { AgentKeys } from './agent-keys.ts'
 import type { DriveAccounts } from './drive.ts'
 import { GoogleAuth, SignInError } from './google.ts'
 import type { User, Users } from './users.ts'
@@ -49,8 +50,8 @@ export interface AuthKit {
  * Google sign-in for the pages on this server: /auth/google/start, /auth/google/callback and /auth/logout.
  * The browser keeps one HttpOnly session cookie (a random value; only its hash is stored).
  */
-export function createAuth(options: { users: Users; google: GoogleAuth; publicUrl: string; drive?: DriveAccounts | null }): AuthKit {
-  const { users, google, publicUrl, drive } = options
+export function createAuth(options: { users: Users; google: GoogleAuth; publicUrl: string; drive?: DriveAccounts | null; agentKeys?: AgentKeys | null }): AuthKit {
+  const { users, google, publicUrl, drive, agentKeys } = options
   const origin = new URL(publicUrl).origin
   const secure = publicUrl.startsWith('https://')
   const cookie = (name: string, value: string, maxAgeSeconds: number, path = '/') =>
@@ -133,20 +134,37 @@ export function createAuth(options: { users: Users; google: GoogleAuth; publicUr
   }
 
   // The page a person opens to see who they are signed in as, and to sign out or manage their Drive. Plain HTML, no scripts.
-  const accountPage = (user: User, notice = '') => {
+  /** Ready-to-paste settings for the coding agents, with the key filled in. Shown once, when the key is made. */
+  const agentSnippets = (secret: string) => {
+    const url = `${publicUrl}/mcp`
+    return [
+      `Claude Code:\nclaude mcp add --transport http voicebrain ${url} --header "Authorization: Bearer ${secret}"`,
+      `opencode (opencode.json):\n{ "mcp": { "voicebrain": { "type": "remote", "url": "${url}", "oauth": false, "headers": { "Authorization": "Bearer ${secret}" } } } }`,
+      `Cursor (~/.cursor/mcp.json):\n{ "mcpServers": { "voicebrain": { "url": "${url}", "headers": { "Authorization": "Bearer ${secret}" } } } }`,
+      `Codex (~/.codex/config.toml), with the key in the VOICEBRAIN_KEY environment variable:\n[mcp_servers.voicebrain]\nurl = "${url}"\nbearer_token_env_var = "VOICEBRAIN_KEY"`,
+    ].join('\n\n')
+  }
+  const keysBlock = (user: User, secret = '') => {
+    if (!agentKeys) return ''
+    const keys = agentKeys.list(user.id)
+    const rows = keys.map(key => `<li><span>${escapeHtml(key.name)} <small>made ${escapeHtml(key.createdAt.slice(0, 10))}, ${key.lastUsedAt ? `last used ${escapeHtml(key.lastUsedAt.slice(0, 10))}` : 'never used'}</small></span><form method="post" action="/account/keys/revoke"><input type="hidden" name="id" value="${escapeHtml(key.id)}"><button class="quiet" type="submit">Revoke</button></form></li>`).join('')
+    return `<h2>Coding agents</h2><p>Connect Claude Code, Cursor, opencode, Codex or any tool that speaks MCP to your notes with a personal key. A key shows once, can be revoked on its own, and gives the tool the same access to your notes that you have.</p>${secret ? `<p class="note" role="status">Your new key. Copy it now, it will not be shown again:</p><pre>${escapeHtml(agentSnippets(secret))}</pre>` : ''}${keys.length ? `<ul class="keys">${rows}</ul>` : ''}<form method="post" action="/account/keys" class="inline"><input name="name" maxlength="60" placeholder="Name, for example My laptop" aria-label="Name for the new key"><button type="submit">Create a key</button></form>`
+  }
+  const accountPage = (user: User, notice = '', secret = '') => {
     const connected = drive?.isConnected(user.id) ?? false
     const driveBlock = !drive ? '' : connected
       ? `<h2>Google Drive</h2><p>Connected. Your notes are kept in your own Drive.</p><form method="post" action="/account/drive/disconnect"><button class="quiet" type="submit">Disconnect Drive</button></form>`
       : `<h2>Google Drive</h2><p>Not connected yet. Connect it so your notes are kept in your own Drive.</p><p><a class="btn" href="/auth/drive/start">Connect Google Drive</a></p>`
     return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="robots" content="noindex"><title>Your account · voicebrain</title><style>${STYLE}
-h2{margin:24px 0 6px;font-size:15px;font-weight:600;letter-spacing:0;color:#eee}.btn,button{display:inline-block;padding:10px 16px;border-radius:999px;border:1px solid #3a3a3a;background:#d5bea7;color:#111;font:inherit;font-weight:600;text-decoration:none;cursor:pointer}button.quiet{background:none;color:#eee}.note{color:#d5bea7}</style></head>
+h2{margin:24px 0 6px;font-size:15px;font-weight:600;letter-spacing:0;color:#eee}.btn,button{display:inline-block;padding:10px 16px;border-radius:999px;border:1px solid #3a3a3a;background:#d5bea7;color:#111;font:inherit;font-weight:600;text-decoration:none;cursor:pointer}button.quiet{background:none;color:#eee}.note{color:#d5bea7}pre{white-space:pre-wrap;word-break:break-all;background:#0b0b0b;border:1px solid #262626;border-radius:12px;padding:12px;font-size:12px;color:#eee}ul.keys{list-style:none;padding:0;margin:12px 0}ul.keys li{display:flex;justify-content:space-between;align-items:center;gap:12px;padding:8px 0;border-top:1px solid #262626}ul.keys small{display:block;color:#888}form.inline{display:flex;gap:8px;flex-wrap:wrap}form.inline input{flex:1;min-width:160px;padding:10px 12px;border-radius:10px;border:1px solid #3a3a3a;background:#0b0b0b;color:#eee;font:inherit}</style></head>
 <body><main><p class="eyebrow">voicebrain</p><h1>Your account</h1>${notice ? `<p class="note" role="status">${escapeHtml(notice)}</p>` : ''}<p>Signed in as <strong>${escapeHtml(user.email)}</strong>.</p>${driveBlock}
+${keysBlock(user, secret)}
 <h2>Sign out</h2><p>This signs out this browser. Phones and computers you connected stay connected until you disconnect them in the app.</p><form method="post" action="/account/signout"><button class="quiet" type="submit">Sign out</button></form></main></body></html>`
   }
-  const sendAccount = (res: Response, user: User, notice = '') => {
+  const sendAccount = (res: Response, user: User, notice = '', secret = '') => {
     res.setHeader('Cache-Control', 'no-store')
     res.setHeader('Content-Security-Policy', "frame-ancestors 'none'")
-    res.status(200).type('html').send(accountPage(user, notice))
+    res.status(200).type('html').send(accountPage(user, notice, secret))
   }
   router.get('/account', (req, res) => {
     const user = userOf(req)
@@ -158,6 +176,21 @@ h2{margin:24px 0 6px;font-size:15px;font-weight:600;letter-spacing:0;color:#eee}
     users.endSession(parseCookies(req.headers.cookie)[SESSION_COOKIE] ?? '')
     res.append('Set-Cookie', cookie(SESSION_COOKIE, '', 0))
     page(res, 200, 'Signed out', 'You are signed out of voicebrain in this browser.', { href: '/account', text: 'Sign in again' })
+  })
+  router.post('/account/keys', express.urlencoded({ extended: false }), (req, res) => {
+    if (!originOk(req)) { page(res, 403, 'Not allowed', 'This request came from another site.'); return }
+    const user = userOf(req)
+    if (!user || !agentKeys) { res.redirect(303, signInUrl('/account')); return }
+    const made = agentKeys.create(user.id, typeof req.body?.name === 'string' ? req.body.name : '')
+    if (!made) { sendAccount(res, user, 'You already have 20 keys. Revoke one you no longer use first.'); return }
+    sendAccount(res, user, '', made.secret)
+  })
+  router.post('/account/keys/revoke', express.urlencoded({ extended: false }), (req, res) => {
+    if (!originOk(req)) { page(res, 403, 'Not allowed', 'This request came from another site.'); return }
+    const user = userOf(req)
+    if (!user || !agentKeys) { res.redirect(303, signInUrl('/account')); return }
+    const done = agentKeys.revoke(user.id, typeof req.body?.id === 'string' ? req.body.id : '')
+    sendAccount(res, user, done ? 'Key revoked. Anything using it stops working now.' : 'That key was not found.')
   })
   router.post('/account/drive/disconnect', async (req, res, next) => {
     try {

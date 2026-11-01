@@ -51,18 +51,28 @@ Check `https://brain.example.com/health`.
 
 Connect the phone (or a computer): open the app, tap **Connect to voicebrain**. The app asks the server for a code, opens the server's approval page by itself, and waits. Sign in with Google there (once per browser) and tap Approve; the app connects on its own and keeps its own revocable token. Nothing is copied, pasted or sent in a link. It needs Google sign-in (see *Sign-in*) and `PUBLIC_URL` to be set. To add a second device from one that is already connected, the connected app can ask for a short code (8 characters, good for 2 minutes, once) and the new device types it in: `POST /v1/pair/offer` makes the code, `POST /v1/pair/claim` redeems it. For a server without them, or for scripts, the older way still works: `docker compose exec voicebrain node src/main.ts pair --app https://<your-app> --endpoint https://brain.example.com` prints a link that carries the upload token.
 
-Transcription runs on the VPS itself (the `stt` container, faster-whisper), so audio never leaves it and there is no per-minute cost. **There is no other AI service and no API key on the server.** Everything that needs a language model is done by the assistant you already pay for, ChatGPT, through the MCP tools.
+Transcription runs on the VPS itself (the `stt` container, faster-whisper), so audio never leaves it and there is no per-minute cost. Sorting notes into tasks and ideas needs a language model, and you choose where it comes from (see *Who sorts the notes*): your assistant over MCP, an API key of your own, or an agent program. By default there is no key on the server.
 
 ## Who sorts the notes
 
-Whisper writes a note down word for word within a minute or so. Turning the words into a title, a summary, tasks, ideas, decisions, people and projects is done by **ChatGPT**, through two tools:
+Whisper writes a note down word for word within a minute or so. Turning the words into a title, a summary, tasks, ideas, decisions, people and projects is a second step, and you choose who does it:
 
-- `notes_to_process` hands over the oldest notes that are written down but not sorted, with the rules (quote the speaker's exact words, never invent anything).
-- `save_digest` stores what ChatGPT found. The server checks every task, idea, decision and question against the transcript, exactly as before: anything whose quoted words cannot be found in what was said is **dropped and counted**. It works once per note, so a later or injected call cannot overwrite a result.
+1. **An assistant, over MCP** (the default, no key needed). `notes_to_process` hands the oldest unsorted notes to ChatGPT, Claude Code, Cursor or any MCP client, and `save_digest` stores what it found. `brief` tells the assistant when notes are waiting, and the custom instruction in the guide tells it to sort them without being asked. The catch: **this only happens while someone is using that assistant**, because a subscription cannot run in the background. Until then a note is searchable by its words but has no tasks, and its title is "Voice note". ChatGPT also asks permission before it saves, and the server cannot change that.
+2. **An API key on the server** (automatic). Set `LLM_BASE_URL`, `LLM_API_KEY` and `LLM_MODEL` for any OpenAI-compatible service (OpenAI, Groq, OpenRouter, Gemini's compatible endpoint, a local Ollama), or `LLM_PROVIDER=anthropic` with an Anthropic key. Every note is sorted a minute after you record it.
+3. **An agent program on the server** (automatic, uses its own login). `LLM_PROVIDER=claude-code`, `codex` or `opencode`, or `LLM_PROVIDER=cli` with `LLM_COMMAND`. The program gets the note's words on stdin, in a fresh empty folder, and **none of this server's secrets** (only `PATH`, `HOME` and names you list in `LLM_CLI_ENV`). The presets are untested against the real programs, so run `node src/main.ts llm-test` first. Two cautions: the program reads a stranger's words, so keep its tools off; and check that the provider's terms allow your kind of use (for example a personal subscription on your own machine is not the same as a shared server).
 
-`brief` tells ChatGPT when notes are waiting, and the custom instruction in the guide tells it to sort them without being asked. This has a cost you should know about: **sorting only happens while someone is using ChatGPT**, because a ChatGPT subscription cannot run in the background. Until then a note is searchable by its words but has no tasks, and its title is the generic "Voice note". ChatGPT also asks permission before it saves (it does for every tool that changes something), and this cannot be turned off from the server. A silent recording needs no sorting and is marked automatically.
+All three go through the same check: every task, idea, decision and question must carry words copied from the transcript, and anything that cannot be matched is **dropped and counted**. `save_digest` works once per note, so a later or injected call cannot overwrite a result. A silent recording needs no sorting and is marked automatically.
 
-Self-hosters who prefer automatic sorting can still point `LLM_BASE_URL` at any OpenAI-compatible server (a local model, for example). It is off by default and nothing needs it.
+`GET /v1/status` shows `awaitingAssistant`, the notes written down but not sorted yet. If you do set a key or program, that is also what handles old notes: restart and they are sorted.
+
+## Using it from coding agents (Claude Code, Cursor, opencode, Codex)
+
+The `/mcp` address speaks standard MCP over HTTP, so any agent can use it. Two ways to sign in:
+
+- **A personal key** (works everywhere, no browser): open your account page (`/account`), create a key under *Coding agents*, and copy the ready-made settings for your tool. A key belongs to you, shows once, is stored hashed, can be revoked on its own, and stops working if you are taken off the allowlist.
+- **OAuth**: clients that support it (Claude Code, opencode, ChatGPT) can just be given the address and will open the same Google sign-in.
+
+Example for Claude Code: `claude mcp add --transport http voicebrain https://YOUR-SERVER/mcp --header "Authorization: Bearer vbk_..."`. For opencode set `"oauth": false` when you use a key, or it tries OAuth first. If Claude Code ignores the header and starts an OAuth flow instead, use the OAuth route (`/mcp` inside Claude Code). The Cursor and Codex settings in the account page are written from memory of their documentation, so check them against each tool's current docs.
 
 ## Sign-in with Google
 
@@ -142,7 +152,7 @@ Each device gets its own token (`vbd_…`, stored on the server only as a hash) 
 "Private" depends on who runs the machine, so exactly:
 
 - **On a server your team can log in to, the team can read everything.** An administrator, or anyone in the `docker` group (which is root-equivalent), can open every recording and transcript. Nothing in this software prevents that, because the server has to read your audio to transcribe it and your transcripts to answer ChatGPT. The tokens, the passphrase and HTTPS protect against outsiders, not against whoever administers the server.
-- **Third parties see text.** When ChatGPT reads or sorts your notes, the text goes to OpenAI. Nothing else receives it: transcription runs on the server and audio stays there (and in your Drive). No other AI service is used.
+- **Third parties see text.** Whatever sorts or reads your notes receives their text: OpenAI when ChatGPT does, and the provider of any key or program you configure on the server. Transcription runs on the server and audio stays there (and in your Drive).
 
 If a person needs their notes to be reachable by nobody else, in order of strength:
 
@@ -185,7 +195,7 @@ Check it is alive: `docker compose exec stt python -c "import urllib.request; pr
 | `MCP_TOKEN` | Optional fixed bearer token for clients without OAuth |
 | `OWNER_TIMEZONE` | IANA zone for "today" and "overdue" (default UTC) |
 | `STT_PROVIDER`, `STT_BASE_URL`, `STT_API_KEY`, `STT_MODEL`, `STT_LANGUAGE`, `STT_PROMPT`, `STT_MAX_MB` | An OpenAI-compatible `/audio/transcriptions` server (the bundled Whisper container). Gemini is no longer supported and is refused at start. `*_API_KEY` may list several keys, comma separated |
-| `LLM_BASE_URL`, `LLM_API_KEY`, `LLM_MODEL`, `LLM_MAX_INPUT_CHARS` | **Optional and off by default.** Any OpenAI-compatible `/chat/completions` server that sorts notes automatically instead of ChatGPT. Not needed. |
+| `LLM_PROVIDER`, `LLM_BASE_URL`, `LLM_API_KEY`, `LLM_MODEL`, `LLM_COMMAND`, `LLM_CLI_ENV`, `LLM_MAX_INPUT_CHARS` | **Optional** (see *Who sorts the notes*). An OpenAI-compatible server, Anthropic, or an agent program, so notes are sorted on the server without an assistant. Off by default. |
 | `ALLOWED_ORIGIN` | CORS origin for the recorder app (default `*`) |
 | `STORAGE_BACKEND`, `DRIVE_RETAIN_AUDIO` | Where the notes (audio, transcripts, digests) are kept: `local` (default, files under `DATA_DIR/inbox/`) or `drive` (each user's own Google Drive). `DRIVE_RETAIN_AUDIO` is `keep` (default) or `drop-after-digest`. See *Storage* below |
 | `DATA_DIR`, `PORT`, `HOST`, `MAX_UPLOAD_MB`, `MAX_ATTEMPTS`, `GIT`, `WORKER`, `REINDEX` | Defaults are fine |

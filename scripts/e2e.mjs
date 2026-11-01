@@ -461,7 +461,7 @@ await step('the ChatGPT card hands over this server’s address, and the user gu
   assert.match(await page.evaluate(() => navigator.clipboard.readText()), /^I use a plugin called voicebrain\./)
   await page.getByRole('link', { name: 'Open the user guide' }).click()
   await page.getByRole('heading', { name: 'User guide', level: 1 }).waitFor()
-  for (const name of ['1. Sign in', '2. Record a note', '5. Connect ChatGPT', '8. Who can see your notes']) await page.getByRole('heading', { name }).waitFor()
+  for (const name of ['1. Sign in', '2. Record a note', '5. Connect ChatGPT', '7. Use it from Claude Code, Cursor, opencode or Codex', '9. Who can see your notes']) await page.getByRole('heading', { name }).waitFor()
   assert.equal(await page.getByLabel('Address to give ChatGPT').inputValue(), `${ENDPOINT}/mcp`)
   await page.setViewportSize({ width: 320, height: 700 })
   assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), 'the guide scrolls sideways at 320px')
