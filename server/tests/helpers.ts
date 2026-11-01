@@ -25,11 +25,24 @@ export function testConfig(dir: string, overrides: Partial<Config> = {}): Config
   }
 }
 
+const handedOut = new Set<number>()
+
+/**
+ * A port nobody is listening on. Random and below the range the OS uses for outgoing connections, and never the
+ * same one twice in a process: a recycled port lets undici reuse a keep-alive socket that belonged to the previous
+ * (closed) test server, which shows up as "other side closed".
+ */
 export async function freePort(): Promise<number> {
-  return new Promise(resolve => {
-    const probe = createNet()
-    probe.listen(0, '127.0.0.1', () => { const port = (probe.address() as { port: number }).port; probe.close(() => resolve(port)) })
-  })
+  for (;;) {
+    const port = 20_000 + Math.floor(Math.random() * 12_000)
+    if (handedOut.has(port)) continue
+    const free = await new Promise<boolean>(resolve => {
+      const probe = createNet()
+      probe.once('error', () => resolve(false))
+      probe.listen(port, '127.0.0.1', () => probe.close(() => resolve(true)))
+    })
+    if (free) { handedOut.add(port); return port }
+  }
 }
 
 async function body(request: IncomingMessage): Promise<Buffer> {
