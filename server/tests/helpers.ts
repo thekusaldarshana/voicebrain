@@ -19,7 +19,7 @@ export async function tempDir(): Promise<{ dir: string; clean: () => Promise<voi
 
 export function testConfig(dir: string, overrides: Partial<Config> = {}): Config {
   return {
-    port: 0, host: '127.0.0.1', dataDir: dir, publicUrl: '', ingestToken: INGEST, mcpToken: '', ownerPassphrase: '', googleClientId: '', googleClientSecret: '', allowedEmails: [], allowedOrigin: '*',
+    port: 0, host: '127.0.0.1', dataDir: dir, publicUrl: '', ingestToken: INGEST, mcpToken: '', ownerPassphrase: '', googleClientId: '', googleClientSecret: '', allowedEmails: [], driveEnabled: false, tokenEncryptionKey: '', allowedOrigin: '*',
     ownerTimezone: 'Asia/Colombo', stt: null, llm: null, workerEnabled: true, workerIntervalMs: 40, maxAttempts: 4, gitEnabled: true, insecure: false,
     ...overrides,
   }

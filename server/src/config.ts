@@ -17,6 +17,10 @@ export interface Config {
   googleClientSecret: string
   /** Lower-case emails allowed to sign in. Empty = the first user to sign in claims the instance. */
   allowedEmails: string[]
+  /** Per-user Google Drive connections are on. Needs Google sign-in and TOKEN_ENCRYPTION_KEY. */
+  driveEnabled: boolean
+  /** base64 of 32 random bytes. Encrypts the stored Drive refresh tokens. Empty = not set. */
+  tokenEncryptionKey: string
   allowedOrigin: string
   /** IANA zone used for "today" and for notes written in chat. Example: Asia/Colombo */
   ownerTimezone: string
@@ -51,6 +55,13 @@ export function loadConfig(env: Record<string, string | undefined> = process.env
   const badEmail = allowedEmails.find(email => !/^[^@\s]+@[^@\s]+$/.test(email))
   if (badEmail) throw new Error('ALLOWED_EMAILS must be a comma-separated list of email addresses.')
 
+  const tokenEncryptionKey = text(env.TOKEN_ENCRYPTION_KEY)
+  // Never echo the value: it is a secret even when it is wrong.
+  if (tokenEncryptionKey && !/^[A-Za-z0-9+/]{43}=?$/.test(tokenEncryptionKey)) throw new Error('TOKEN_ENCRYPTION_KEY must be 32 random bytes in base64 (openssl rand -base64 32).')
+  const driveEnabled = env.DRIVE_ENABLED === '1'
+  if (driveEnabled && !tokenEncryptionKey) throw new Error('DRIVE_ENABLED=1 needs TOKEN_ENCRYPTION_KEY (openssl rand -base64 32). Drive refresh tokens are never stored unencrypted.')
+  if (driveEnabled && authMode({ googleClientId, googleClientSecret, ownerPassphrase }) !== 'google') throw new Error('DRIVE_ENABLED=1 needs Google sign-in (GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET and PUBLIC_URL).')
+
   const sttProvider = text(env.STT_PROVIDER) === 'gemini' || text(env.STT_BASE_URL).includes('generativelanguage.googleapis.com') ? 'gemini' : 'openai'
   const sttBase = trimSlash(text(env.STT_BASE_URL) || (sttProvider === 'gemini' && env.STT_PROVIDER ? 'https://generativelanguage.googleapis.com/v1beta' : ''))
   const llmBase = trimSlash(text(env.LLM_BASE_URL))
@@ -65,6 +76,8 @@ export function loadConfig(env: Record<string, string | undefined> = process.env
     googleClientId,
     googleClientSecret,
     allowedEmails,
+    driveEnabled,
+    tokenEncryptionKey,
     allowedOrigin: text(env.ALLOWED_ORIGIN, '*'),
     ownerTimezone: text(env.OWNER_TIMEZONE, 'UTC'),
     stt: sttBase ? { provider: sttProvider, baseUrl: sttBase, apiKey: text(env.STT_API_KEY), model: text(env.STT_MODEL, sttProvider === 'gemini' ? 'gemini-3.5-transcribe' : 'whisper-1'), language: text(env.STT_LANGUAGE, 'en'), maxMb: Number(env.STT_MAX_MB ?? (sttProvider === 'gemini' ? 14 : 24)), prompt: text(env.STT_PROMPT) } : null,

@@ -1,9 +1,11 @@
 import { Router, type Request, type Response } from 'express'
+import type { DriveAccounts } from './drive.ts'
 import { GoogleAuth, SignInError } from './google.ts'
 import type { User, Users } from './users.ts'
 
 export const SESSION_COOKIE = 'vb_session'
 const LOGIN_COOKIE = 'vb_login'
+const DRIVE_COOKIE = 'vb_drive'
 
 const escapeHtml = (text: string) => text.replace(/[&<>"']/g, ch => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[ch] as string)
 
@@ -47,8 +49,8 @@ export interface AuthKit {
  * Google sign-in for the pages on this server: /auth/google/start, /auth/google/callback and /auth/logout.
  * The browser keeps one HttpOnly session cookie (a random value; only its hash is stored).
  */
-export function createAuth(options: { users: Users; google: GoogleAuth; publicUrl: string }): AuthKit {
-  const { users, google, publicUrl } = options
+export function createAuth(options: { users: Users; google: GoogleAuth; publicUrl: string; drive?: DriveAccounts | null }): AuthKit {
+  const { users, google, publicUrl, drive } = options
   const origin = new URL(publicUrl).origin
   const secure = publicUrl.startsWith('https://')
   const cookie = (name: string, value: string, maxAgeSeconds: number, path = '/') =>
@@ -98,6 +100,37 @@ export function createAuth(options: { users: Users; google: GoogleAuth; publicUr
       next(error)
     }
   })
+
+  // Connecting Drive: a second consent, only for someone who is already signed in, bound to this browser like sign-in is.
+  if (drive) {
+    router.get('/auth/drive/start', (req, res) => {
+      const user = userOf(req)
+      if (!user) { res.redirect(302, signInUrl('/auth/drive/start')); return }
+      try {
+        const { url, state } = google.beginDrive(user.id, user.email)
+        res.append('Set-Cookie', cookie(DRIVE_COOKIE, state, 600, '/auth/drive'))
+        res.setHeader('Cache-Control', 'no-store')
+        res.redirect(302, url)
+      } catch (error) {
+        if (error instanceof SignInError) { page(res, error.status, 'Drive unavailable', error.message); return }
+        throw error
+      }
+    })
+
+    router.get('/auth/drive/callback', async (req, res, next) => {
+      const user = userOf(req)
+      if (!user) { page(res, 401, 'Sign in first', 'Sign in with Google, then connect Drive again.', { href: signInUrl('/auth/drive/start'), text: 'Sign in' }); return }
+      try {
+        const grant = await google.finishDrive({ code: req.query.code, state: req.query.state, error: req.query.error }, parseCookies(req.headers.cookie)[DRIVE_COOKIE] ?? '', user.id)
+        res.append('Set-Cookie', cookie(DRIVE_COOKIE, '', 0, '/auth/drive'))
+        drive.save(user.id, grant)
+        page(res, 200, 'Drive connected', 'voicebrain can now keep your notes in your own Google Drive. Go back to the app.')
+      } catch (error) {
+        if (error instanceof SignInError) { res.append('Set-Cookie', cookie(DRIVE_COOKIE, '', 0, '/auth/drive')); page(res, error.status, 'Drive not connected', error.message, { href: '/auth/drive/start', text: 'Try again' }); return }
+        next(error)
+      }
+    })
+  }
 
   router.post('/auth/logout', (req, res) => {
     if (!originOk(req)) { res.status(403).json({ error: 'This request came from another site.' }); return }

@@ -5,6 +5,8 @@ import { mcpAuthRouter } from '@modelcontextprotocol/sdk/server/auth/router.js'
 import { requireBearerAuth } from '@modelcontextprotocol/sdk/server/auth/middleware/bearerAuth.js'
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js'
 import { createAuth, messagePage } from './auth.ts'
+import { DriveAccounts, TokenCipher } from './drive.ts'
+import type { DriveTokenProvider } from './drive-tokens.ts'
 import type { Brain } from './brain.ts'
 import { authMode, type Config } from './config.ts'
 import { Devices } from './devices.ts'
@@ -25,6 +27,8 @@ export interface App {
   express: express.Express
   brain: Brain
   pipeline: Pipeline
+  /** Each person's Drive access token, for the storage layer. Null when Drive is off. */
+  drive: DriveTokenProvider | null
   /** Opens the files and database, then starts the worker. */
   start(): Promise<void>
   listen(port?: number): Promise<number>
@@ -44,8 +48,11 @@ export function createApp(config: Config, options: PipelineOptions = {}, authOpt
   // Who the people are: Google sign-in, or (legacy, only when Google is not configured) the owner passphrase.
   const mode = authMode(config)
   const users = new Users(join(config.dataDir, 'users.sqlite'), { allowedEmails: config.allowedEmails })
-  const google = mode === 'google' ? new GoogleAuth({ clientId: config.googleClientId, clientSecret: config.googleClientSecret, redirectUri: `${config.publicUrl}/auth/google/callback`, ...(authOptions.googleEndpoints ? { endpoints: authOptions.googleEndpoints } : {}) }) : null
-  const authKit = google ? createAuth({ users, google, publicUrl: config.publicUrl }) : null
+  // Drive: each person's own, encrypted at rest. Refuses to exist without the key, so a token is never stored in the clear.
+  if (config.driveEnabled && (mode !== 'google' || !config.tokenEncryptionKey)) throw new Error('Google Drive needs Google sign-in and TOKEN_ENCRYPTION_KEY.')
+  const drive = config.driveEnabled ? new DriveAccounts({ path: join(config.dataDir, 'drive.sqlite'), cipher: new TokenCipher(config.tokenEncryptionKey), clientId: config.googleClientId, clientSecret: config.googleClientSecret, isActive: id => users.isActive(id), ...(authOptions.googleEndpoints ? { endpoints: authOptions.googleEndpoints } : {}) }) : null
+  const google = mode === 'google' ? new GoogleAuth({ clientId: config.googleClientId, clientSecret: config.googleClientSecret, redirectUri: `${config.publicUrl}/auth/google/callback`, ...(drive ? { driveRedirectUri: `${config.publicUrl}/auth/drive/callback` } : {}), ...(authOptions.googleEndpoints ? { endpoints: authOptions.googleEndpoints } : {}) }) : null
+  const authKit = google ? createAuth({ users, google, publicUrl: config.publicUrl, drive }) : null
   // Pairing needs a way to approve (a signed-in person, or the passphrase) and a public address (to show the approval page).
   const pairing = mode !== 'none' && config.publicUrl ? new Pairing({ devices, passphrase: mode === 'passphrase' ? config.ownerPassphrase : '', publicUrl: config.publicUrl, isActive: id => users.isActive(id) }) : null
 
@@ -137,6 +144,18 @@ export function createApp(config: Config, options: PipelineOptions = {}, authOpt
     const id = String(req.params.id)
     if (!res.locals.admin && id !== mine) { res.status(403).json({ error: 'A device can only disconnect itself.' }); return }
     res.status(devices.revoke(id) ? 204 : 404).end()
+  })
+  // Each person's Google Drive: whether it is connected (never any secret), and a way to disconnect. Connecting is a browser flow.
+  app.get('/v1/drive', (_req, res) => {
+    const userId = String(res.locals.userId)
+    res.json({ enabled: Boolean(drive), connected: Boolean(drive?.isConnected(userId)), canConnect: Boolean(drive) && userId !== OWNER_ID, connectPath: drive ? '/auth/drive/start' : null })
+  })
+  app.post('/v1/drive/disconnect', async (_req, res, next) => {
+    try {
+      if (!drive) { res.status(501).json({ error: 'Google Drive is not set up on this server.' }); return }
+      await drive.disconnect(String(res.locals.userId))
+      res.json({ ok: true, connected: false })
+    } catch (error) { next(error) }
   })
   app.get('/v1/status', async (_req, res, next) => { try { res.json(await (await tenantOf(res)).pipeline.status()) } catch (error) { next(error) } })
   app.post('/v1/notes', async (req, res, next) => {
@@ -255,6 +274,7 @@ export function createApp(config: Config, options: PipelineOptions = {}, authOpt
     express: app,
     brain,
     pipeline,
+    drive,
     async start() {
       // Everyone who may still sign in gets their brain (and worker) up now; anyone else's is opened when they first ask.
       await tenants.start(users.all().filter(user => users.isActive(user.id)).map(user => user.id))
@@ -268,6 +288,7 @@ export function createApp(config: Config, options: PipelineOptions = {}, authOpt
     async close() {
       await new Promise<void>(done => { if (!http) { done(); return } http.closeAllConnections?.(); http.close(() => done()) })
       provider?.close()
+      drive?.close()
       users.close()
       devices.close()
       await tenants.close()
