@@ -156,6 +156,18 @@ describe('Google sign-in: state, PKCE and the code exchange', () => {
     expect(google.tokenCalls).toBe(before) // the code was never even exchanged
   })
 
+  it('refuses an attacker\'s sign-in even when the victim\'s own browser has started one', async () => {
+    const victim = new Browser()
+    await victim.fetch(`${origin}/auth/google/start`) // the victim has a login cookie of their own
+    const attackerStart = await new Browser().fetch(`${origin}/auth/google/start`)
+    const url = new URL(attackerStart.headers.get('location') as string)
+    const code = google.issue({ nonce: url.searchParams.get('nonce') as string, challenge: url.searchParams.get('code_challenge') as string, redirectUri: url.searchParams.get('redirect_uri') as string }, ALICE)
+    const response = await victim.fetch(`${origin}/auth/google/callback?${new URLSearchParams({ code, state: url.searchParams.get('state') as string })}`)
+    expect(response.status).toBe(400)
+    expect(victim.cookie('vb_session')).toBeUndefined()
+    expect(users()).toEqual([])
+  })
+
   it('refuses an invented state, a missing code, and a sign-in Google cancelled', async () => {
     const browser = new Browser()
     expect((await browser.fetch(`${origin}/auth/google/callback?code=x&state=invented`)).status).toBe(400)

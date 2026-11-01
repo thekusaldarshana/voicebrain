@@ -49,15 +49,25 @@ The stack is isolated on purpose: its own compose project, network and volumes, 
 
 Check `https://brain.example.com/health`.
 
-Connect the phone (or a computer): open the app, tap **Connect to voicebrain**. The app asks the server for a code, opens the server's approval page by itself, and waits. Type the owner passphrase there once and tap Approve; the app connects on its own and keeps its own revocable token. Nothing is copied, pasted or sent in a link. It needs `OWNER_PASSPHRASE` and `PUBLIC_URL` to be set. For a server without them, or for scripts, the older way still works: `docker compose exec voicebrain node src/main.ts pair --app https://<your-app> --endpoint https://brain.example.com` prints a link that carries the upload token.
+Connect the phone (or a computer): open the app, tap **Connect to voicebrain**. The app asks the server for a code, opens the server's approval page by itself, and waits. Sign in with Google there (once per browser) and tap Approve; the app connects on its own and keeps its own revocable token. Nothing is copied, pasted or sent in a link. It needs Google sign-in (see *Sign-in*) and `PUBLIC_URL` to be set. To add a second device from one that is already connected, the connected app can ask for a short code (8 characters, good for 2 minutes, once) and the new device types it in: `POST /v1/pair/offer` makes the code, `POST /v1/pair/claim` redeems it. For a server without them, or for scripts, the older way still works: `docker compose exec voicebrain node src/main.ts pair --app https://<your-app> --endpoint https://brain.example.com` prints a link that carries the upload token.
 
 Transcription runs on the VPS itself (the `stt` container, faster-whisper), so audio never leaves it and there is no per-minute cost. Gemini (or any model server) is used only for the document work: turning transcripts into tasks, ideas and summaries.
 
+## Sign-in with Google
+
+There is no owner passphrase to remember: who you are comes from Google, and devices are added with short codes.
+
+1. In Google Cloud Console, create an OAuth client of type **Web application**. Add the authorized redirect URI `https://brain.example.com/auth/google/callback` (your `PUBLIC_URL` plus `/auth/google/callback`). The consent screen needs only the `openid`, `email` and `profile` scopes.
+2. In `.env`: `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, and `ALLOWED_EMAILS=you@example.com`. Restart. The startup log says `on  sign-in with Google`.
+3. The first time you approve a device or ChatGPT, you are sent to Google and back. Your browser then stays signed in for 14 days.
+
+Already running with `OWNER_PASSPHRASE`? Nothing breaks: while `GOOGLE_CLIENT_ID` is empty the passphrase works exactly as before. Once Google is set, the passphrase is ignored. Devices and ChatGPT connections made before the switch keep working and belong to an internal `owner` identity, as do `INGEST_TOKEN` and `MCP_TOKEN`.
+
 ## Connect ChatGPT
 
-1. In `.env` set `PUBLIC_URL` and `OWNER_PASSPHRASE`, then `docker compose up -d`.
+1. In `.env` set `PUBLIC_URL`, `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET` and `ALLOWED_EMAILS` (see *Sign-in*), then `docker compose up -d`.
 2. In ChatGPT, turn on Developer mode and add a custom MCP server. The menu names move around, so look for "Developer mode" / "custom connector". The URL is `https://brain.example.com/mcp`. Choose OAuth.
-3. ChatGPT opens your server's approval page. Type the owner passphrase and approve. You do this once; the connection then refreshes itself for 90 days at a time.
+3. ChatGPT opens your server, which sends you to Google to sign in, then shows an approval page naming who is asking. Tap Approve. You do this once; the connection then refreshes itself for 90 days at a time.
 4. Add this to ChatGPT's custom instructions so it uses the tools without being asked: *"I keep a personal knowledge base of my own voice notes. At the start of any task, plan or decision, call `brief` with the topic and mention anything relevant I said before, with the date. Before saying you cannot remember something about me, call `search`."*
 
 Other clients (Claude Desktop, Cursor) can use the same `/mcp` URL with `MCP_TOKEN` as a bearer token.
@@ -88,14 +98,17 @@ Ask ChatGPT "run my weekly review" and it can read the week's notes and write `w
 
 | | |
 |---|---|
-| `POST /v1/pair/start`, `POST /v1/pair/poll` | Adding a device. No token yet; approval needs the owner passphrase on `GET /pair` |
+| `POST /v1/pair/start`, `POST /v1/pair/poll` | Adding a device. No token yet; approval needs a Google sign-in on `GET /pair` |
+| `POST /v1/pair/claim` | A new device redeems the code a connected app is showing. No token yet; wrong codes are throttled |
+| `POST /v1/pair/offer`, `GET /v1/pair/offer/:id` | A connected app asks for a code to show (and whether it was used) |
+| `GET /auth/google/start`, `GET /auth/google/callback`, `POST /auth/logout` | Google sign-in for the pages on this server |
 | `POST /v1/notes` | Upload a recording |
 | `PATCH /v1/notes/:id` | Rename or re-tag an uploaded note. The user's title wins over the model's |
 | `DELETE /v1/notes/:id` | Delete for good: audio, transcript, digest, vault page, search entries, tasks |
 | `GET /v1/me`, `GET /v1/devices`, `DELETE /v1/devices/:id` | Who this device is; connected devices; disconnect one (a device can disconnect only itself) |
 | `GET /v1/ping`, `GET /v1/status` | Check the connection; what the pipeline is doing |
 
-Each device gets its own token (`vbd_…`, stored on the server only as a hash). The original `INGEST_TOKEN` still works and counts as the owner's. Device tokens can upload, rename and delete notes; they cannot read note content and cannot open the assistant endpoint.
+Each device gets its own token (`vbd_…`, stored on the server only as a hash) and belongs to the person who approved it (`GET /v1/me` shows `userId`). The original `INGEST_TOKEN` still works and counts as the owner's. Device tokens can upload, rename and delete notes; they cannot read note content and cannot open the assistant endpoint.
 
 **What "delete" removes.** The note and everything derived from it, on the server. Not removed: copies the assistant wrote into `wiki/` (it may have quoted the note), anything already sent to the language model or ChatGPT, and any backup you made. Generated vault pages are kept out of git so that deleting a note leaves no copy in the version history; only `wiki/` and `state/` are versioned.
 
@@ -138,7 +151,10 @@ Check it is alive: `docker compose exec stt python -c "import urllib.request; pr
 | Variable | |
 |---|---|
 | `INGEST_TOKEN` | **Required.** 16+ characters. The recorder app's bearer token |
-| `PUBLIC_URL`, `OWNER_PASSPHRASE` | Turn on OAuth for ChatGPT. Passphrase 12+ characters |
+| `PUBLIC_URL` | The public https address. Required for sign-in and for ChatGPT |
+| `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET` | Turn on Google sign-in (both or neither) |
+| `ALLOWED_EMAILS` | Comma-separated Google emails that may sign in. Empty: the first person to sign in claims the server |
+| `OWNER_PASSPHRASE` | **Legacy.** Only used while Google sign-in is not configured. 12+ characters |
 | `MCP_TOKEN` | Optional fixed bearer token for clients without OAuth |
 | `OWNER_TIMEZONE` | IANA zone for "today" and "overdue" (default UTC) |
 | `STT_PROVIDER`, `STT_BASE_URL`, `STT_API_KEY`, `STT_MODEL`, `STT_LANGUAGE`, `STT_PROMPT`, `STT_MAX_MB` | `gemini` (Google's API) or any OpenAI-compatible `/audio/transcriptions` server. `*_API_KEY` may list several keys, comma separated |
@@ -153,12 +169,15 @@ Without `STT_BASE_URL` or `LLM_BASE_URL` the server still accepts and stores not
 Everything lives in `data/`:
 - `data/inbox/` audio, transcripts, digests. **The irreplaceable part.** Back this up.
 - `data/vault/` is a git repository. Add a private remote and push on a schedule: `git -C data/vault remote add origin <url>`.
-- `data/index.sqlite` and `data/auth.sqlite`: the index is disposable (delete it and restart to rebuild); `auth.sqlite` holds the ChatGPT sign-in (delete it and approve again).
+- `data/index.sqlite` and `data/auth.sqlite`: the index is disposable (delete it and restart to rebuild); `auth.sqlite` holds the ChatGPT sign-in (delete it and approve again). `users.sqlite` holds who signed in (Google id, email, name) and their browser sessions; deleting it also releases a first-run claim. `devices.sqlite` holds the paired devices.
 
 ## Security notes
 
-- Two separate secrets: `INGEST_TOKEN` can only upload; the assistant endpoint rejects it. Neither is the owner passphrase.
-- The approval page accepts 5 wrong passphrases per address per 10 minutes and 20 per hour overall, then locks.
+- Two separate secrets: `INGEST_TOKEN` can only upload; the assistant endpoint rejects it. `MCP_TOKEN` is the assistant's.
+- Sign-in is Google OpenID Connect (authorization code + PKCE, scopes `openid email profile`). The ID token's signature, issuer, audience, expiry, nonce and `email_verified` are all checked here. No Drive or other Google API is used.
+- Only allowed people get in: the addresses in `ALLOWED_EMAILS`, or, when that is empty, whoever signs in first (they claim the server, atomically; everyone later is refused). **Set `ALLOWED_EMAILS` before you publish the address**, or a stranger who finds it first becomes the owner. Taking an address off the list cuts off that person's browser sessions, devices and assistant tokens at once.
+- The assistant's approval page always asks (it names who is asking) even when you are already signed in, so a link from a stranger cannot hand out access. Approving needs the browser session and refuses requests another site started.
+- Codes for adding a device from a connected one last 2 minutes, work once, and are never logged. Wrong guesses: 5 per address per 10 minutes and 30 per hour overall, then locked. The legacy passphrase page keeps its old limit of 5 per address per 10 minutes and 20 per hour.
 - OAuth codes work once, tokens are stored only as SHA-256 hashes, refresh tokens rotate.
 - Notes and wiki pages are your own words, but the assistant treats them as data, not instructions (the server says so in its MCP instructions). Still, do not paste untrusted text into a note and then ask the assistant to act on "what the notes say".
 - Run behind HTTPS only. `PUBLIC_URL` must be the https address.
@@ -167,7 +186,7 @@ Everything lives in `data/`:
 
 ```bash
 cd server && npm install
-npm test           # 97 tests: pipeline, search, vault, OAuth, MCP, providers, upload contract
+npm test           # pipeline, search, vault, Google sign-in (against a fake Google), OAuth, MCP, pairing, providers, upload contract
 npm run typecheck
 INGEST_TOKEN=local-development-token npm start     # needs Node 22.18+ (24 recommended)
 ```
@@ -183,6 +202,7 @@ Tests run the whole pipeline against fake transcription and language-model serve
 - Gemini speech-to-text also works (kept as an optional fallback), but it sends your audio to Google and returns no timestamps from its transcribe model, so it is off by default.
 
 **Not verified yet**
+- **Google itself.** Sign-in is tested against a fake Google (real token endpoint behaviour, PKCE and a JWKS that rotates) because no credentials existed when it was written. The first real sign-in is the real test.
 - **ChatGPT itself.** The OAuth and MCP flow is tested with the official MCP client and a hand-driven PKCE flow, not with ChatGPT. Its connector feature is in beta and its menus move.
 - **`large-v3-turbo` through the Whisper server.** The benchmark ran the model directly in faster-whisper; the end-to-end pipeline run used `small.en`. The server code is model-independent, but it has not been run with turbo, and the first start downloads about 1.6 GB.
 - **The Docker images and compose file.** No Docker daemon was available where this was built. The Whisper server and the voicebrain server were each run directly (Python venv, Node), not in their containers, so the `Dockerfile`s, the model download on first start, and the compose networking have never been built. They are short; `docker compose build` will show problems quickly.
