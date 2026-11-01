@@ -168,6 +168,9 @@ export class DriveStorage implements NoteStorage {
   private readonly locks = new KeyedLock()
   private readonly users = new Map<string, UserState>()
   private readonly memo = new Map<string, { at: number; files: DriveFile[] }>()
+  private readonly inflight = new Map<string, Promise<DriveFile[]>>()
+  /** Bumped whenever a note changes here, so a listing that started before the change is never remembered after it. */
+  private readonly versions = new Map<string, number>()
   private readonly json = new Map<string, { bytes: Uint8Array; at: number }>()
   private jsonBytes = 0
 
@@ -281,11 +284,39 @@ export class DriveStorage implements NoteStorage {
     for (const id of ids) { state.recent.delete(id); state.tombstones.add(id) }
   }
 
-  /** Every file of a note that Drive (and this process) knows of: its folder and its files. Not gated on meta.json. */
-  private async snapshot(userId: string, noteId: string, fresh = false): Promise<DriveFile[]> {
+  /** Forgets what is remembered about a note's file list: call after anything that changes the note. */
+  private touch(key: string) {
+    this.memo.delete(key)
+    this.inflight.delete(key)
+    this.versions.set(key, (this.versions.get(key) ?? 0) + 1)
+  }
+
+  /**
+   * Every file of a note that Drive (and this process) knows of: its folder and its files. Not gated on meta.json.
+   * Readers share one listing; `fresh` always asks Drive (writes and deletes need the truth, not a 3 second old answer).
+   */
+  private snapshot(userId: string, noteId: string, fresh = false): Promise<DriveFile[]> {
     const key = `${userId}/${noteId}`
-    const memo = this.memo.get(key)
-    if (!fresh && memo && this.now() - memo.at < MEMO_MS) return memo.files
+    if (!fresh) {
+      const memo = this.memo.get(key)
+      if (memo && this.now() - memo.at < MEMO_MS) return Promise.resolve(memo.files)
+      const shared = this.inflight.get(key)
+      if (shared) return shared
+    }
+    const version = this.versions.get(key) ?? 0
+    const listing = this.listNote(userId, noteId).then(files => {
+      if ((this.versions.get(key) ?? 0) === version) this.memo.set(key, { at: this.now(), files })
+      return files
+    })
+    if (!fresh) {
+      this.inflight.set(key, listing)
+      const done = () => { if (this.inflight.get(key) === listing) this.inflight.delete(key) }
+      listing.then(done, done)
+    }
+    return listing
+  }
+
+  private async listNote(userId: string, noteId: string): Promise<DriveFile[]> {
     const state = this.state(userId)
     const listed = await this.listFiles(userId, `${marker('vbNote', noteId)} and trashed = false`)
     const byId = new Map(listed.filter(file => !state.tombstones.has(file.id)).map(file => [file.id, file]))
@@ -293,9 +324,7 @@ export class DriveStorage implements NoteStorage {
       if (this.now() - entry.at > RECENT_MS) { state.recent.delete(id); continue }
       if (entry.file.appProperties?.vbNote === noteId) byId.set(id, entry.file)
     }
-    const files = [...byId.values()]
-    this.memo.set(key, { at: this.now(), files })
-    return files
+    return [...byId.values()]
   }
 
   private cacheJson(key: string, bytes: Uint8Array) {
@@ -316,7 +345,7 @@ export class DriveStorage implements NoteStorage {
   }
 
   private dropNoteCaches(userId: string, noteId: string) {
-    this.memo.delete(`${userId}/${noteId}`)
+    this.touch(`${userId}/${noteId}`)
     for (const key of [...this.json.keys()]) if (key.startsWith(`${userId}/${noteId}/`)) this.dropJson(key)
   }
 
@@ -500,7 +529,7 @@ export class DriveStorage implements NoteStorage {
         await rm(this.localDir(userId, noteId), { recursive: true, force: true })
         throw this.goneOr(error, noteId)
       }
-      this.memo.delete(`${userId}/${noteId}`)
+      this.touch(`${userId}/${noteId}`)
       return true
     })
   }
@@ -528,7 +557,7 @@ export class DriveStorage implements NoteStorage {
     const entry = metaOf(files) ? fileNamed(files, filename) : undefined
     if (!entry) return null
     const response = await this.download(userId, entry.id)
-    if (!response) { this.memo.delete(`${userId}/${noteId}`); return null }
+    if (!response) { this.touch(`${userId}/${noteId}`); return null }
     const bytes = new Uint8Array(await response.arrayBuffer())
     this.cacheJson(key, bytes)
     return bytes
@@ -564,7 +593,7 @@ export class DriveStorage implements NoteStorage {
         throw new NoteGone(noteId)
       }
       this.remember(userId, saved)
-      this.memo.delete(`${userId}/${noteId}`)
+      this.touch(`${userId}/${noteId}`)
       if (staged) await rename(staged.tmp, staged.final)
       else this.cacheJson(key, body as Uint8Array)
     })
@@ -594,7 +623,7 @@ export class DriveStorage implements NoteStorage {
     const entry = metaOf(files) ? fileNamed(files, filename) : undefined
     if (!entry) return null
     const response = await this.download(userId, entry.id)
-    if (!response?.body) { this.memo.delete(`${userId}/${noteId}`); return null }
+    if (!response?.body) { this.touch(`${userId}/${noteId}`); return null }
     if (!isAudioFile(filename)) return { stream: response.body as ReadableStream<Uint8Array>, size: entry.size === undefined ? null : Number(entry.size) }
     // Fetched back from Drive into a local file (never held in memory). Under `keep` it becomes the working copy;
     // under `drop-after-digest` it is deleted as soon as the reader is done with it.

@@ -502,3 +502,27 @@ describe('what is kept off Drive, and what is cached', () => {
     expect(fake.requests.length - before).toBe(1)
   })
 })
+
+describe('the call budget (the README quotes these numbers)', () => {
+  const calls = async (fake: FakeDrive, run: () => Promise<unknown>) => { const before = fake.requests.length; await run(); return fake.requests.length - before }
+
+  it('uses a small, known number of Drive calls per operation', async () => {
+    const { fake, storage, make } = await rig()
+    const audio = pattern(300_000) // two 256 KiB pieces with this rig's chunk size
+    expect(await calls(fake, () => storage.createNote(OWNER_ID, A, { meta: meta(A), files: { 'audio.webm': audio } }))).toBe(2 + 1 + 1 + 2 + 1 + 1) // list, app folder list+create, note folder, audio start + 2 pieces, meta
+    expect(await calls(fake, () => storage.createNote(OWNER_ID, B, { meta: meta(B), files: { 'audio.webm': audio } }))).toBe(1 + 1 + 1 + 2 + 1) // the app folder is remembered
+    expect(await calls(fake, () => storage.put(OWNER_ID, A, 'transcript.json', encode('{}')))).toBe(3) // list, upload, check the folder is still there
+    expect(await calls(fake, () => storage.put(OWNER_ID, A, 'transcript.json', encode('{"again":1}')))).toBe(3)
+    expect(await calls(fake, () => storage.put(OWNER_ID, A, 'audio.webm', audio))).toBe(1 + 1 + 2 + 1) // list, start, 2 pieces, check
+    const cold = make({ cacheDir: (await tempDir()).dir })
+    expect(await calls(fake, () => cold.listNotes(OWNER_ID))).toBe(1)
+    expect(await calls(fake, () => cold.hasNote(OWNER_ID, A))).toBe(1)
+    expect(await calls(fake, () => cold.list(OWNER_ID, A))).toBe(0) // the listing was just made
+    expect(await calls(fake, () => cold.get(OWNER_ID, A, 'transcript.json'))).toBe(1) // download only
+    expect(await calls(fake, () => cold.get(OWNER_ID, A, 'transcript.json'))).toBe(0)
+    expect(await calls(fake, () => cold.get(OWNER_ID, A, 'state.json'))).toBe(0)
+    expect(await calls(fake, () => cold.getStream(OWNER_ID, A, 'audio.webm').then(found => found && readAll(found.stream)))).toBe(1)
+    expect(await calls(fake, () => storage.put(OWNER_ID, A, 'state.json', encode('{}')))).toBe(2)
+    expect(await calls(fake, () => storage.deleteNote(OWNER_ID, A))).toBe(2) // list, delete the folder
+  })
+})

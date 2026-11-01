@@ -17,6 +17,8 @@ const WIKI_PATH = /^[A-Za-z0-9][A-Za-z0-9 _\-./]*\.md$/
 const MAX_WIKI_BYTES = 200_000
 /** Folders of generated pages: everything in them can be rebuilt from the stored notes. */
 const GENERATED_DIRS = ['notes', 'daily', 'projects', 'people']
+/** How many notes a rebuild reads ahead of the one it is writing. */
+const READ_AHEAD = 4
 
 /** Offset of an IANA zone from UTC at `date`, in minutes. */
 export function tzOffsetMinutes(timeZone: string, date: Date): number {
@@ -94,16 +96,23 @@ export class Brain {
     this.index.loadTaskStatuses(await this.statuses())
     const written = new Set<string>()
     let notes = 0
-    for (const id of await this.store.ids()) {
-      const [meta, transcript] = await Promise.all([this.store.meta(id), this.store.transcript(id)])
-      if (!meta || !transcript) continue
-      const [digest, edits] = await Promise.all([this.store.digest(id), this.store.edits(id)])
-      const path = notePath(meta)
-      this.index.upsertNote(meta, transcript, digest, path, edits)
-      notes += 1
-      if (pages) {
-        await this.vault.write(path, renderNote(meta, transcript, digest, this.index.taskStatuses(id), edits))
-        written.add(path)
+    // Reads run a few notes ahead of the writes (a remote backend spends its time waiting, not working); the notes
+    // themselves are still handled one at a time and in id order, so the result does not depend on who answered first.
+    const ids = await this.store.ids()
+    for (let at = 0; at < ids.length; at += READ_AHEAD) {
+      const batch = await Promise.all(ids.slice(at, at + READ_AHEAD).map(async id => {
+        const [meta, transcript, digest, edits] = await Promise.all([this.store.meta(id), this.store.transcript(id), this.store.digest(id), this.store.edits(id)])
+        return { id, meta, transcript, digest, edits }
+      }))
+      for (const { id, meta, transcript, digest, edits } of batch) {
+        if (!meta || !transcript) continue
+        const path = notePath(meta)
+        this.index.upsertNote(meta, transcript, digest, path, edits)
+        notes += 1
+        if (pages) {
+          await this.vault.write(path, renderNote(meta, transcript, digest, this.index.taskStatuses(id), edits))
+          written.add(path)
+        }
       }
     }
     await this.syncWiki()

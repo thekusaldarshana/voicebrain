@@ -65,11 +65,10 @@ describe('everything derived can be rebuilt from Drive', () => {
     expect(await pages(second.brain)).toEqual(wanted)
     expect(second.brain.search('trapper')).toEqual(hits)
     expect(await second.brain.getNote(NOTE_ID)).not.toBeNull()
-    // The cost of a rebuild, so a change that makes it worse is noticed: one list for the ids, then per note one list
-    // of its files and one download for each of meta, transcript, digest and edits (edits exist for one note only).
-    const perNote = (calls.length - 1) / IDS.length
+    // The cost of a rebuild, so a change that makes it worse is noticed: one list for the ids; then per note one list of
+    // its files (shared by the four reads) and a download of each of meta, transcript, digest and edits (edits exist for one).
     expect(calls.filter(seen => seen.query.alt === 'media')).toHaveLength(3 * 3 + 1)
-    expect(perNote).toBeLessThanOrEqual(5.5)
+    expect(calls).toHaveLength(1 + 3 + 10)
     expect(calls.some(seen => seen.method !== 'GET')).toBe(false) // a rebuild only reads
     expect(await readdir(join(second.dir, 'cache')).catch(() => [])).toEqual([]) // and no audio was pulled down for it
   })
