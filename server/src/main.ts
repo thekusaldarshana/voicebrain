@@ -42,6 +42,7 @@ async function main() {
   if (mode === 'google' && config.ownerPassphrase) console.log('        OWNER_PASSPHRASE is ignored while Google sign-in is on')
   on('assistant over MCP (OAuth)', mode !== 'none', 'set GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET and PUBLIC_URL')
   if (mode === 'passphrase') console.log('        legacy: approving with OWNER_PASSPHRASE. Set up Google sign-in to drop it')
+  on('Google Drive per person', config.driveEnabled, 'set DRIVE_ENABLED=1 and TOKEN_ENCRYPTION_KEY')
   on('assistant over MCP (static token)', Boolean(config.mcpToken), 'set MCP_TOKEN')
   const stop = async () => { await app.close(); process.exit(0) }
   process.on('SIGTERM', stop)

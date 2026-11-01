@@ -63,6 +63,18 @@ There is no owner passphrase to remember: who you are comes from Google, and dev
 
 Already running with `OWNER_PASSPHRASE`? Nothing breaks: while `GOOGLE_CLIENT_ID` is empty the passphrase works exactly as before. Once Google is set, the passphrase is ignored. Devices and ChatGPT connections made before the switch keep working and belong to an internal `owner` identity, as do `INGEST_TOKEN` and `MCP_TOKEN`.
 
+## Your own Google Drive (optional)
+
+Each signed-in person can connect **their own** Google Drive. The server asks for one permission only, `drive.file`: files this app creates (or that the person opens with it), never the rest of their Drive. This is the plumbing for a Drive storage backend; on its own it connects Drive and keeps the connection alive, and `app.drive.accessToken(userId)` is what a backend calls.
+
+1. Make a key, once, and keep it with your other secrets: `openssl rand -base64 32`. Put it in `.env` as `TOKEN_ENCRYPTION_KEY`. **If you lose it, every person must connect Drive again; if it leaks, anyone who also gets `data/drive.sqlite` can use their Drive.**
+2. In `.env` set `DRIVE_ENABLED=1`. The server **refuses to start** with Drive on but no key (or no Google sign-in): a refresh token is never stored in the clear.
+3. In Google Cloud Console, enable the **Google Drive API** for the project, add the `…/auth/drive/drive.file` scope to the consent screen, and add a second authorized redirect URI: `https://brain.example.com/auth/drive/callback` (your `PUBLIC_URL` plus `/auth/drive/callback`).
+4. **Publish the consent screen** (OAuth consent screen → Publishing status → *Publish app*). `drive.file` is, to my knowledge, not one of Google's sensitive or restricted scopes, so publishing should not need a security review or show people an "unverified app" warning, but I could not check this against a real project: read what the consent-screen page tells you when you publish. **Left in "Testing", Google expires every refresh token after 7 days**: Drive silently disconnects once a week and everyone has to connect again. This is Google's rule, not a bug here.
+5. The app opens `GET /auth/drive/start` in a browser. That signs the person in if needed, shows Google's own consent screen (with the Drive box, which they may untick: the server then refuses and says so), and returns to a "Drive connected" page. `GET /v1/drive` tells the app whether it worked.
+
+How it is kept safe: the refresh token is sealed with AES-256-GCM before it touches disk, with the person's id as associated data, so a row copied to another person's id will not open. Access tokens (about an hour) live only in memory. If Google says the grant was revoked or expired, the stored token is deleted and the Drive reads as not connected. A token that cannot be decrypted (wrong key, altered row) is refused but **not** deleted. `POST /v1/drive/disconnect` revokes the grant at Google and deletes the token. The Google account that consents must be the one that is signed in; a different account is refused and its grant is handed back.
+
 ## Connect ChatGPT
 
 1. In `.env` set `PUBLIC_URL`, `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET` and `ALLOWED_EMAILS` (see *Sign-in*), then `docker compose up -d`.
@@ -98,6 +110,8 @@ Ask ChatGPT "run my weekly review" and it can read the week's notes and write `w
 
 | | |
 |---|---|
+| `GET /v1/drive`, `POST /v1/drive/disconnect` | Whether this person's Google Drive is connected (never a secret), and disconnecting it |
+| `GET /auth/drive/start`, `GET /auth/drive/callback` | Connecting Drive, in a browser (needs a Google session) |
 | `POST /v1/pair/start`, `POST /v1/pair/poll` | Adding a device. No token yet; approval needs a Google sign-in on `GET /pair` |
 | `POST /v1/pair/claim` | A new device redeems the code a connected app is showing. No token yet; wrong codes are throttled |
 | `POST /v1/pair/offer`, `GET /v1/pair/offer/:id` | A connected app asks for a code to show (and whether it was used) |
@@ -153,6 +167,8 @@ Check it is alive: `docker compose exec stt python -c "import urllib.request; pr
 | `INGEST_TOKEN` | **Required.** 16+ characters. The recorder app's bearer token |
 | `PUBLIC_URL` | The public https address. Required for sign-in and for ChatGPT |
 | `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET` | Turn on Google sign-in (both or neither) |
+| `DRIVE_ENABLED` | `1` lets each person connect their own Google Drive. Needs `TOKEN_ENCRYPTION_KEY` and Google sign-in; the server will not start without them |
+| `TOKEN_ENCRYPTION_KEY` | 32 random bytes in base64 (`openssl rand -base64 32`). Encrypts the stored Drive refresh tokens. Keep it out of backups of `data/` |
 | `ALLOWED_EMAILS` | Comma-separated Google emails that may sign in. Empty: the first person to sign in claims the server |
 | `OWNER_PASSPHRASE` | **Legacy.** Only used while Google sign-in is not configured. 12+ characters |
 | `MCP_TOKEN` | Optional fixed bearer token for clients without OAuth |
@@ -168,7 +184,8 @@ Without `STT_BASE_URL` or `LLM_BASE_URL` the server still accepts and stores not
 ## Backups
 
 Everything lives in `data/`:
-- `data/inbox/` audio, transcripts, digests. **The irreplaceable part.** Back this up.
+- `data/inbox/` audio, transcripts, digests. **The irreplaceable part.** Back this up. That is the owner identity's folder (the upload token and any device connected before Google sign-in). Everyone who signs in with Google has their own, under `data/users/<their Google id>/`: `inbox/`, `vault/` and `index.sqlite`, with the same rules. Back up `data/users/` too.
+- `data/drive.sqlite`: each person's sealed Drive connection. Useless without `TOKEN_ENCRYPTION_KEY`, so keep the key somewhere other than the backup of `data/`.
 - `data/vault/` is a git repository. Add a private remote and push on a schedule: `git -C data/vault remote add origin <url>`.
 - `data/index.sqlite` and `data/auth.sqlite`: the index is disposable (delete it and restart to rebuild it; `reindex` below also rebuilds the vault pages); `auth.sqlite` holds the ChatGPT sign-in (delete it and approve again). `users.sqlite` holds who signed in (Google id, email, name) and their browser sessions; deleting it also releases a first-run claim. `devices.sqlite` holds the paired devices.
 - Not rebuildable from `inbox/`: `wiki/` (the assistant's pages) and `vault/state/task-status.json` (which tasks you marked done). They live in the vault repository, so push that.
@@ -197,6 +214,14 @@ docker compose exec voicebrain node src/main.ts reindex     # or: REINDEX=1 in .
 This rewrites the search index and every generated vault page, and removes generated pages that no stored note explains. It never touches `wiki/`, `state/` or the stored notes. It is safe to run any time; stopping the server first avoids a moment where search is partly rebuilt.
 
 Adding a backend: implement `NoteStorage`, then run the shared contract suite against it (`tests/storage-contract.ts`, used by `tests/storage.test.ts` for `LocalStorage` and an in-memory fake). Anything that passes it behaves like the disk.
+
+## People and their notes
+
+Each person who signs in gets their own notes, search index, vault, wiki and background worker, started the first time they are needed (and at start-up for everyone still allowed). What an assistant or app can reach depends only on whose token it holds: a person's assistant token, a device they approved, and the Google session in their browser all resolve to their id, and every note read, edit, delete, search and wiki call goes through that person's own store. There is no way to name another person's note: ids are looked up in the caller's folder only.
+
+The owner identity (`INGEST_TOKEN`, `MCP_TOKEN`, and devices connected before Google sign-in) keeps the folders it always had. **Notes recorded before you switched to Google sign-in belong to that identity, not to your Google account**, so a new Google-connected device or ChatGPT starts with an empty brain. Moving the old notes to a person is not automated yet.
+
+`ALLOWED_EMAILS` is a gate, not a delete button. Taking someone off it stops their browser sessions, devices, assistant tokens and Drive connection at once, and **deletes nothing**: their folder stays exactly as it was, and everything works again if you add them back. Delete `data/users/<id>/` yourself if you really want it gone.
 
 ## Security notes
 
