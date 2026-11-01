@@ -3,7 +3,7 @@
 Receives voice notes from the recorder app, turns them into a searchable, versioned knowledge base, and lets an assistant (ChatGPT, over MCP) read and extend it.
 
 ```
-recorder app ──upload──▶  inbox/<id>/  audio + meta        (never edited)
+recorder app ──upload──▶  storage   audio + meta  (inbox/<id>/ on local disk)  (never edited)
                               │ transcribe   (Whisper, on this machine)
                               ▼
                           transcript.json                   (the permanent record)
@@ -144,6 +144,7 @@ Check it is alive: `docker compose exec stt python -c "import urllib.request; pr
 | `STT_PROVIDER`, `STT_BASE_URL`, `STT_API_KEY`, `STT_MODEL`, `STT_LANGUAGE`, `STT_PROMPT`, `STT_MAX_MB` | `gemini` (Google's API) or any OpenAI-compatible `/audio/transcriptions` server. `*_API_KEY` may list several keys, comma separated |
 | `LLM_BASE_URL`, `LLM_API_KEY`, `LLM_MODEL`, `LLM_MAX_INPUT_CHARS` | Any OpenAI-compatible `/chat/completions` server |
 | `ALLOWED_ORIGIN` | CORS origin for the recorder app (default `*`) |
+| `STORAGE_BACKEND` | Where the notes (audio, transcripts, digests) are kept. Only `local` exists today (files under `DATA_DIR/inbox/`); see *Storage* below |
 | `DATA_DIR`, `PORT`, `HOST`, `MAX_UPLOAD_MB`, `MAX_ATTEMPTS`, `GIT`, `WORKER`, `REINDEX` | Defaults are fine |
 
 Without `STT_BASE_URL` or `LLM_BASE_URL` the server still accepts and stores notes; `GET /v1/status` (and the startup log) says what is missing.
@@ -153,7 +154,33 @@ Without `STT_BASE_URL` or `LLM_BASE_URL` the server still accepts and stores not
 Everything lives in `data/`:
 - `data/inbox/` audio, transcripts, digests. **The irreplaceable part.** Back this up.
 - `data/vault/` is a git repository. Add a private remote and push on a schedule: `git -C data/vault remote add origin <url>`.
-- `data/index.sqlite` and `data/auth.sqlite`: the index is disposable (delete it and restart to rebuild); `auth.sqlite` holds the ChatGPT sign-in (delete it and approve again).
+- `data/index.sqlite` and `data/auth.sqlite`: the index is disposable (delete it and restart to rebuild it; `reindex` below also rebuilds the vault pages); `auth.sqlite` holds the ChatGPT sign-in (delete it and approve again).
+- Not rebuildable from `inbox/`: `wiki/` (the assistant's pages) and `vault/state/task-status.json` (which tasks you marked done). They live in the vault repository, so push that.
+
+## Storage
+
+Everything the server must not lose goes through one interface, `NoteStorage` (`src/storage.ts`), so notes can live somewhere other than this machine's disk (a Google Drive backend is the next step). Everything else is derived and disposable.
+
+| | What | Where |
+|---|---|---|
+| **Source of truth** (per note) | `meta.json`, the audio, `transcript.json`, `digest.json`, `edits.json` | `NoteStorage`, addressed by (user id, note id, filename) |
+| Operational | `state.json` (retry counters) | `NoteStorage`, but a backend may keep it locally; losing it only resets retries |
+| **Derived, rebuildable** | the vault pages (`notes/`, `daily/`, `projects/`, `people/`, `tasks.md`) and the search index (`index.sqlite`) | local disk |
+| Not derived, not in storage yet | `wiki/` and `vault/state/task-status.json` | the vault (git) |
+
+`LocalStorage` is the only backend. It keeps the layout the server has always used (`data/inbox/<id>/…`) and stores the owner's notes there; every call carries a user id (today always `owner`) so other users could get their own space later (`data/users/<id>/inbox/`). Writes are atomic (a reader sees the old file or the new one), a note appears complete or not at all, and a delete hides the note in one step before removing its files, so a write that finishes after a delete fails with `NoteGone` instead of bringing the note back.
+
+**`retainAudio`** (`keep`, or `drop-after-digest`) is for backends that hold a durable copy elsewhere: once a note is transcribed and digested, the backend may evict its local copy of the audio and fetches it back when it is played or transcribed again. `LocalStorage` refuses `drop-after-digest`, because there its disk holds the only copy.
+
+**Rebuild everything derived**, from the stored notes alone:
+
+```bash
+docker compose exec voicebrain node src/main.ts reindex     # or: REINDEX=1 in .env, once
+```
+
+This rewrites the search index and every generated vault page, and removes generated pages that no stored note explains. It never touches `wiki/`, `state/` or the stored notes. It is safe to run any time; stopping the server first avoids a moment where search is partly rebuilt.
+
+Adding a backend: implement `NoteStorage`, then run the shared contract suite against it (`tests/storage-contract.ts`, used by `tests/storage.test.ts` for `LocalStorage` and an in-memory fake). Anything that passes it behaves like the disk.
 
 ## Security notes
 
@@ -167,7 +194,7 @@ Everything lives in `data/`:
 
 ```bash
 cd server && npm install
-npm test           # 97 tests: pipeline, search, vault, OAuth, MCP, providers, upload contract
+npm test           # pipeline, search, vault, storage contract, reindex, OAuth, MCP, providers, upload contract
 npm run typecheck
 INGEST_TOKEN=local-development-token npm start     # needs Node 22.18+ (24 recommended)
 ```
