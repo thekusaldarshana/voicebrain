@@ -114,7 +114,7 @@ describe('Devices (the registry)', () => {
     const folder = await mkdtemp(join(tmpdir(), 'devices-'))
     try {
       const devices = new Devices(join(folder, 'devices.sqlite'))
-      const { token } = devices.create('Pixel', 'Chrome on Android')
+      const { token } = devices.create('Pixel', 'Chrome on Android', 'owner')
       devices.close()
       const raw = new DatabaseSync(join(folder, 'devices.sqlite'))
       const rows = raw.prepare('SELECT * FROM devices').all() as Array<Record<string, unknown>>
@@ -128,8 +128,8 @@ describe('Devices (the registry)', () => {
   it('knows each device by its own token, records when it was last seen at most once a minute, and can cut one off', () => {
     let now = Date.parse('2026-11-01T10:00:00Z')
     const devices = new Devices(':memory:', () => now)
-    const phone = devices.create('Phone', '')
-    const laptop = devices.create('Laptop', '')
+    const phone = devices.create('Phone', '', 'owner')
+    const laptop = devices.create('Laptop', '', 'owner')
     expect(devices.verify(phone.token)?.id).toBe(phone.device.id)
     const first = devices.verify(phone.token)?.lastSeenAt
     now += 30_000

@@ -8,6 +8,8 @@ import type { OAuthClientInformationFull, OAuthTokenRevocationRequest, OAuthToke
 import { InvalidGrantError, InvalidTokenError } from '@modelcontextprotocol/sdk/server/auth/errors.js'
 import { mkdirSync } from 'node:fs'
 import { dirname } from 'node:path'
+import { ensureColumn } from './sqlite.ts'
+import { OWNER_ID } from './users.ts'
 
 const ACCESS_SECONDS = 3600
 const REFRESH_SECONDS = 90 * 86_400
@@ -24,15 +26,16 @@ export class Throttle {
   private readonly perKey = new Map<string, number[]>()
   private globalFailures: number[] = []
   private readonly now: () => number
+  private readonly limits: { perKey: number; global: number }
 
-  constructor(now: () => number = Date.now) { this.now = now }
+  constructor(now: () => number = Date.now, limits: { perKey?: number; global?: number } = {}) { this.now = now; this.limits = { perKey: limits.perKey ?? 5, global: limits.global ?? 20 } }
 
   blocked(key: string): boolean {
     const cutoff = this.now() - 10 * 60_000
     const mine = (this.perKey.get(key) ?? []).filter(at => at > cutoff)
     this.perKey.set(key, mine)
     this.globalFailures = this.globalFailures.filter(at => at > this.now() - 60 * 60_000)
-    return mine.length >= 5 || this.globalFailures.length >= 20
+    return mine.length >= this.limits.perKey || this.globalFailures.length >= this.limits.global
   }
 
   failed(key: string) {
@@ -41,24 +44,36 @@ export class Throttle {
   }
 }
 
-export interface OwnerOAuthOptions { dbPath: string; passphrase: string; staticToken: string; now?: () => number }
+/**
+ * Who may approve an assistant's request. `google`: a person signed in with Google (a browser session); the
+ * provider sends everyone else to sign in first. `passphrase`: the legacy owner passphrase, used only when Google
+ * sign-in is not configured.
+ */
+export type Approver =
+  | { kind: 'passphrase'; passphrase: string }
+  | { kind: 'google'; userOf: (req: Request) => { id: string; email: string } | null; signInUrl: (next: string) => string; originOk: (req: Request) => boolean }
+
+export interface OwnerOAuthOptions { dbPath: string; approver: Approver; staticToken: string; isActive?: (userId: string) => boolean; now?: () => number }
 
 /**
- * A minimal single-user OAuth 2.1 server (dynamic client registration, PKCE, refresh tokens). Anyone can
- * register a client, but nothing is issued until the owner types the passphrase on the approval page.
+ * A minimal OAuth 2.1 server (dynamic client registration, PKCE, refresh tokens). Anyone can register a client,
+ * but nothing is issued until a signed-in, allowed person taps Approve on the consent page (or, in legacy mode,
+ * types the owner passphrase). Every code and token carries the id of the person who approved it.
  * Tokens are stored only as SHA-256 hashes.
  */
 export class OwnerOAuthProvider implements OAuthServerProvider {
   readonly clientsStore: OAuthRegisteredClientsStore
   readonly throttle: Throttle
   private readonly db: DatabaseSync
-  private readonly passphrase: string
+  private readonly approver: Approver
+  private readonly isActive: (userId: string) => boolean
   private readonly staticToken: string
   private readonly now: () => number
 
   constructor(options: OwnerOAuthOptions) {
     this.now = options.now ?? Date.now
-    this.passphrase = options.passphrase
+    this.approver = options.approver
+    this.isActive = options.isActive ?? (() => true)
     this.staticToken = options.staticToken
     this.throttle = new Throttle(this.now)
     if (options.dbPath !== ':memory:') mkdirSync(dirname(options.dbPath), { recursive: true })
@@ -70,6 +85,8 @@ export class OwnerOAuthProvider implements OAuthServerProvider {
       CREATE TABLE IF NOT EXISTS oauth_codes(hash TEXT PRIMARY KEY, client_id TEXT NOT NULL, challenge TEXT NOT NULL, redirect_uri TEXT NOT NULL, resource TEXT, expires_at INTEGER NOT NULL, attempted INTEGER NOT NULL DEFAULT 0);
       CREATE TABLE IF NOT EXISTS oauth_tokens(hash TEXT PRIMARY KEY, kind TEXT NOT NULL, client_id TEXT NOT NULL, resource TEXT, expires_at INTEGER NOT NULL);
     `)
+    // Codes and tokens issued before sign-in existed belong to the owner identity.
+    for (const table of ['oauth_codes', 'oauth_tokens']) ensureColumn(this.db, table, 'user_id', `TEXT NOT NULL DEFAULT '${OWNER_ID}'`)
     this.clientsStore = {
       getClient: id => {
         const row = this.db.prepare('SELECT json FROM oauth_clients WHERE client_id = ?').get(id) as { json: string } | undefined
@@ -92,15 +109,36 @@ export class OwnerOAuthProvider implements OAuthServerProvider {
     for (const table of ['oauth_pending', 'oauth_codes', 'oauth_tokens']) this.db.prepare(`DELETE FROM ${table} WHERE expires_at < ?`).run(at)
   }
 
-  /** Step 1: the client sent the person here. Show the approval page. */
+  /** Step 1: the client sent the person here. Show the consent page, after sending them to sign in if they are not. */
   async authorize(client: OAuthClientInformationFull, params: AuthorizationParams, res: Response): Promise<void> {
     this.sweep()
     const id = token()
     this.db.prepare('INSERT INTO oauth_pending VALUES (?, ?, ?, ?)').run(id, client.client_id, JSON.stringify({ state: params.state, codeChallenge: params.codeChallenge, redirectUri: params.redirectUri, resource: params.resource?.href }), this.seconds() + 600)
+    this.show(res.req, res, id, client)
+  }
+
+  /** Where the sign-in page sends the person back to, with the request they started. */
+  async resume(req: Request, res: Response): Promise<void> {
+    const id = String(req.query.request ?? '')
+    const row = this.db.prepare('SELECT client_id, expires_at FROM oauth_pending WHERE id = ?').get(id) as { client_id: string; expires_at: number } | undefined
+    const client = row && row.expires_at >= this.seconds() ? (this.clientsStore.getClient(row.client_id) as OAuthClientInformationFull | undefined) : undefined
+    if (!client) { res.status(400).type('text').send('This approval request expired. Start again from your assistant.'); return }
+    this.show(req, res, id, client)
+  }
+
+  private show(req: Request, res: Response, id: string, client: OAuthClientInformationFull) {
+    res.setHeader('Cache-Control', 'no-store')
+    res.setHeader('Content-Security-Policy', "frame-ancestors 'none'")
+    if (this.approver.kind === 'google') {
+      const user = this.approver.userOf(req)
+      if (!user) { res.redirect(302, this.approver.signInUrl(`/authorize/continue?request=${encodeURIComponent(id)}`)); return }
+      res.status(200).type('html').send(this.page(id, client, '', user.email))
+      return
+    }
     res.status(200).type('html').send(this.page(id, client))
   }
 
-  private page(id: string, client: OAuthClientInformationFull, message = ''): string {
+  private page(id: string, client: OAuthClientInformationFull, message = '', signedInAs = ''): string {
     const name = escapeHtml(client.client_name ?? 'An application')
     const host = escapeHtml(new URL(client.redirect_uris[0] ?? 'https://unknown.invalid').host)
     return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="robots" content="noindex"><title>Approve access · voicebrain</title>
@@ -113,11 +151,11 @@ input{display:block;width:100%;margin-top:8px;padding:12px;border:1px solid #3a3
 <p><strong>${name}</strong> (${host}) wants to read your voice notes and wiki, mark tasks done, and write wiki pages. Only approve if you started this from your own assistant.</p>
 ${message ? `<p class="msg" role="alert">${escapeHtml(message)}</p>` : ''}
 <form method="post" action="/authorize/decision"><input type="hidden" name="request" value="${escapeHtml(id)}">
-<label>Owner passphrase<input name="passphrase" type="password" autocomplete="current-password" autofocus></label>
+${signedInAs ? `<p>Signed in as <strong>${escapeHtml(signedInAs)}</strong>.</p>` : '<label>Owner passphrase<input name="passphrase" type="password" autocomplete="current-password" autofocus></label>'}
 <div class="row"><button class="no" name="decision" value="deny" type="submit" formnovalidate>Deny</button><button class="go" name="decision" value="approve" type="submit">Approve</button></div></form></main></body></html>`
   }
 
-  /** Step 2: the owner answered. Check the passphrase and send the client back with a one-time code. */
+  /** Step 2: the person answered. Check who they are and send the client back with a one-time code. */
   async decide(req: Request, res: Response): Promise<void> {
     const body = (req.body ?? {}) as Record<string, string>
     const row = this.db.prepare('SELECT client_id, json, expires_at FROM oauth_pending WHERE id = ?').get(String(body.request ?? '')) as { client_id: string; json: string; expires_at: number } | undefined
@@ -136,16 +174,25 @@ ${message ? `<p class="msg" role="alert">${escapeHtml(message)}</p>` : ''}
       res.redirect(302, back({ error: 'access_denied' }))
       return
     }
-    const key = req.ip ?? 'unknown'
-    if (this.throttle.blocked(key)) { res.status(429).type('html').send(this.page(String(body.request), client, 'Too many wrong attempts. Wait ten minutes and try again.')); return }
-    if (!same(String(body.passphrase ?? ''), this.passphrase)) {
-      this.throttle.failed(key)
-      res.status(401).type('html').send(this.page(String(body.request), client, 'That passphrase is not right.'))
-      return
+    let userId = OWNER_ID
+    if (this.approver.kind === 'google') {
+      // The session cookie is the proof, so refuse anything a foreign page could have submitted for the browser.
+      if (!this.approver.originOk(req)) { res.status(403).type('text').send('This request came from another site.'); return }
+      const user = this.approver.userOf(req)
+      if (!user) { res.redirect(303, this.approver.signInUrl(`/authorize/continue?request=${encodeURIComponent(String(body.request))}`)); return }
+      userId = user.id
+    } else {
+      const key = req.ip ?? 'unknown'
+      if (this.throttle.blocked(key)) { res.status(429).type('html').send(this.page(String(body.request), client, 'Too many wrong attempts. Wait ten minutes and try again.')); return }
+      if (!this.approver.passphrase || !same(String(body.passphrase ?? ''), this.approver.passphrase)) {
+        this.throttle.failed(key)
+        res.status(401).type('html').send(this.page(String(body.request), client, 'That passphrase is not right.'))
+        return
+      }
     }
     this.db.prepare('DELETE FROM oauth_pending WHERE id = ?').run(String(body.request))
     const code = token()
-    this.db.prepare('INSERT INTO oauth_codes(hash, client_id, challenge, redirect_uri, resource, expires_at) VALUES (?, ?, ?, ?, ?, ?)').run(sha(code), client.client_id, params.codeChallenge, params.redirectUri, params.resource ?? null, this.seconds() + CODE_SECONDS)
+    this.db.prepare('INSERT INTO oauth_codes(hash, client_id, challenge, redirect_uri, resource, user_id, expires_at) VALUES (?, ?, ?, ?, ?, ?, ?)').run(sha(code), client.client_id, params.codeChallenge, params.redirectUri, params.resource ?? null, userId, this.seconds() + CODE_SECONDS)
     res.redirect(302, back({ code }))
   }
 
@@ -161,35 +208,38 @@ ${message ? `<p class="msg" role="alert">${escapeHtml(message)}</p>` : ''}
   }
 
   async exchangeAuthorizationCode(client: OAuthClientInformationFull, code: string, _verifier?: string, redirectUri?: string): Promise<OAuthTokens> {
-    const row = this.db.prepare('SELECT client_id, redirect_uri, resource, expires_at FROM oauth_codes WHERE hash = ?').get(sha(code)) as { client_id: string; redirect_uri: string; resource: string | null; expires_at: number } | undefined
+    const row = this.db.prepare('SELECT client_id, redirect_uri, resource, user_id, expires_at FROM oauth_codes WHERE hash = ?').get(sha(code)) as { client_id: string; redirect_uri: string; resource: string | null; user_id: string; expires_at: number } | undefined
     this.db.prepare('DELETE FROM oauth_codes WHERE hash = ?').run(sha(code)) // single use, even if the checks below fail
     if (!row || row.client_id !== client.client_id || row.expires_at < this.seconds()) throw new InvalidGrantError('Invalid or expired authorization code')
     if (redirectUri && redirectUri !== row.redirect_uri) throw new InvalidGrantError('redirect_uri does not match the authorization request')
-    return this.issue(client.client_id, row.resource)
+    if (!this.isActive(row.user_id)) throw new InvalidGrantError('This account no longer has access')
+    return this.issue(client.client_id, row.resource, row.user_id)
   }
 
   async exchangeRefreshToken(client: OAuthClientInformationFull, refreshToken: string): Promise<OAuthTokens> {
-    const row = this.db.prepare("SELECT client_id, resource, expires_at FROM oauth_tokens WHERE hash = ? AND kind = 'refresh'").get(sha(refreshToken)) as { client_id: string; resource: string | null; expires_at: number } | undefined
+    const row = this.db.prepare("SELECT client_id, resource, user_id, expires_at FROM oauth_tokens WHERE hash = ? AND kind = 'refresh'").get(sha(refreshToken)) as { client_id: string; resource: string | null; user_id: string; expires_at: number } | undefined
     if (!row || row.client_id !== client.client_id || row.expires_at < this.seconds()) throw new InvalidGrantError('Invalid or expired refresh token')
     this.db.prepare('DELETE FROM oauth_tokens WHERE hash = ?').run(sha(refreshToken)) // rotate
-    return this.issue(client.client_id, row.resource)
+    if (!this.isActive(row.user_id)) throw new InvalidGrantError('This account no longer has access')
+    return this.issue(client.client_id, row.resource, row.user_id)
   }
 
-  private issue(clientId: string, resource: string | null): OAuthTokens {
+  private issue(clientId: string, resource: string | null, userId: string): OAuthTokens {
     this.sweep()
     const access = token()
     const refresh = token()
     const at = this.seconds()
-    this.db.prepare('INSERT INTO oauth_tokens VALUES (?, ?, ?, ?, ?)').run(sha(access), 'access', clientId, resource, at + ACCESS_SECONDS)
-    this.db.prepare('INSERT INTO oauth_tokens VALUES (?, ?, ?, ?, ?)').run(sha(refresh), 'refresh', clientId, resource, at + REFRESH_SECONDS)
+    const insert = this.db.prepare('INSERT INTO oauth_tokens(hash, kind, client_id, resource, user_id, expires_at) VALUES (?, ?, ?, ?, ?, ?)')
+    insert.run(sha(access), 'access', clientId, resource, userId, at + ACCESS_SECONDS)
+    insert.run(sha(refresh), 'refresh', clientId, resource, userId, at + REFRESH_SECONDS)
     return { access_token: access, token_type: 'Bearer', expires_in: ACCESS_SECONDS, refresh_token: refresh, scope: SCOPE }
   }
 
   async verifyAccessToken(value: string): Promise<AuthInfo> {
-    if (this.staticToken && same(value, this.staticToken)) return { token: value, clientId: 'static-token', scopes: [SCOPE], expiresAt: this.seconds() + ACCESS_SECONDS }
-    const row = this.db.prepare("SELECT client_id, resource, expires_at FROM oauth_tokens WHERE hash = ? AND kind = 'access'").get(sha(value)) as { client_id: string; resource: string | null; expires_at: number } | undefined
-    if (!row || row.expires_at < this.seconds()) throw new InvalidTokenError('Invalid or expired token')
-    return { token: value, clientId: row.client_id, scopes: [SCOPE], expiresAt: row.expires_at, ...(row.resource ? { resource: new URL(row.resource) } : {}) }
+    if (this.staticToken && same(value, this.staticToken)) return { token: value, clientId: 'static-token', scopes: [SCOPE], expiresAt: this.seconds() + ACCESS_SECONDS, extra: { userId: OWNER_ID } }
+    const row = this.db.prepare("SELECT client_id, resource, user_id, expires_at FROM oauth_tokens WHERE hash = ? AND kind = 'access'").get(sha(value)) as { client_id: string; resource: string | null; user_id: string; expires_at: number } | undefined
+    if (!row || row.expires_at < this.seconds() || !this.isActive(row.user_id)) throw new InvalidTokenError('Invalid or expired token')
+    return { token: value, clientId: row.client_id, scopes: [SCOPE], expiresAt: row.expires_at, extra: { userId: row.user_id }, ...(row.resource ? { resource: new URL(row.resource) } : {}) }
   }
 
   async revokeToken(_client: OAuthClientInformationFull, request: OAuthTokenRevocationRequest): Promise<void> {
@@ -202,7 +252,7 @@ export function staticTokenVerifier(secret: string) {
   return {
     async verifyAccessToken(value: string): Promise<AuthInfo> {
       if (!secret || !same(value, secret)) throw new InvalidTokenError('Invalid token')
-      return { token: value, clientId: 'static-token', scopes: [SCOPE], expiresAt: Math.floor(Date.now() / 1000) + ACCESS_SECONDS }
+      return { token: value, clientId: 'static-token', scopes: [SCOPE], expiresAt: Math.floor(Date.now() / 1000) + ACCESS_SECONDS, extra: { userId: OWNER_ID } }
     },
   }
 }

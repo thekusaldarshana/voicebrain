@@ -1,5 +1,5 @@
 import { createApp } from './app.ts'
-import { loadConfig } from './config.ts'
+import { authMode, loadConfig } from './config.ts'
 
 function pair(argv: string[]) {
   const get = (name: string) => { const at = argv.indexOf(`--${name}`); return at >= 0 ? (argv[at + 1] ?? '') : '' }
@@ -24,7 +24,12 @@ async function main() {
   on('upload from the recorder app', true, '')
   on('transcription', config.stt !== null, 'set STT_BASE_URL')
   on('task extraction', config.llm !== null, 'set LLM_BASE_URL and LLM_MODEL')
-  on('assistant over MCP (OAuth)', Boolean(config.ownerPassphrase), 'set OWNER_PASSPHRASE and PUBLIC_URL')
+  const mode = authMode(config)
+  on('sign-in with Google', mode === 'google', 'set GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET and PUBLIC_URL')
+  if (mode === 'google') console.log(config.allowedEmails.length ? `        only ${config.allowedEmails.length} allowed email address${config.allowedEmails.length === 1 ? '' : 'es'} can sign in` : '        no ALLOWED_EMAILS: the first person to sign in claims this server')
+  if (mode === 'google' && config.ownerPassphrase) console.log('        OWNER_PASSPHRASE is ignored while Google sign-in is on')
+  on('assistant over MCP (OAuth)', mode !== 'none', 'set GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET and PUBLIC_URL')
+  if (mode === 'passphrase') console.log('        legacy: approving with OWNER_PASSPHRASE. Set up Google sign-in to drop it')
   on('assistant over MCP (static token)', Boolean(config.mcpToken), 'set MCP_TOKEN')
   const stop = async () => { await app.close(); process.exit(0) }
   process.on('SIGTERM', stop)
