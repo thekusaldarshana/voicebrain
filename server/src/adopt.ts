@@ -13,7 +13,8 @@ const notEmpty = (dir: string) => { try { return readdirSync(dir).length > 0 } c
  * Hands everything the owner identity has (notes recorded before Google sign-in, the vault with its wiki pages, the
  * devices and assistant connections made before the switch) to one signed-in person. Run it with the server stopped.
  * Without `apply` it only says what it would do. It refuses to touch a person who already has notes, so it can never
- * merge or overwrite, and it moves folders rather than copying them, so nothing is duplicated.
+ * merge or overwrite, and it moves folders rather than copying them, so nothing is duplicated. The empty vault the
+ * server made for them is set aside as `vault.unused-<time>`, not deleted.
  *
  * Local storage only: with STORAGE_BACKEND=drive the owner's notes are on this disk and the person's are in their
  * Drive, so moving them is a copy between backends, not a rename.
@@ -30,8 +31,8 @@ export function adoptOwner(dataDir: string, email: string, apply: boolean): Adop
   const target = join(dataDir, 'users', user.id)
   const inbox = join(dataDir, 'inbox')
   const notes = notEmpty(inbox) ? readdirSync(inbox).filter(name => !name.includes('.')).length : 0
-  // Only a problem when there is something to move: running it again after it finished is harmless.
-  if ((notes > 0 || existsSync(join(dataDir, 'vault'))) && (notEmpty(join(target, 'inbox')) || existsSync(join(target, 'vault')))) throw new Error(`${user.email} already has notes or a vault of their own. Refusing to merge into them.`)
+  // The server makes an empty vault for everyone who signs in, so a vault being there is normal. Notes are what we must never overwrite.
+  if (notes > 0 && notEmpty(join(target, 'inbox'))) throw new Error(`${user.email} already has notes of their own. Refusing to merge into them.`)
   let devices = 0
   let assistantTokens = 0
   const open = (name: string) => (existsSync(join(dataDir, name)) ? new DatabaseSync(join(dataDir, name)) : null)
@@ -43,10 +44,18 @@ export function adoptOwner(dataDir: string, email: string, apply: boolean): Adop
     if (apply) {
       // Folders first: if one fails nothing else has changed, and running it again picks up where it stopped.
       mkdirSync(target, { recursive: true })
-      if (existsSync(inbox)) renameSync(inbox, join(target, 'inbox'))
-      if (existsSync(join(dataDir, 'vault'))) renameSync(join(dataDir, 'vault'), join(target, 'vault'))
-      // The search index is rebuilt from the notes when the server starts.
-      for (const suffix of ['', '-wal', '-shm']) rmSync(join(dataDir, `index.sqlite${suffix}`), { force: true })
+      const stamp = new Date().toISOString().replace(/\D/g, '').slice(0, 14)
+      if (existsSync(inbox)) {
+        if (existsSync(join(target, 'inbox'))) renameSync(join(target, 'inbox'), join(target, `inbox.unused-${stamp}`)) // an empty folder the server made
+        renameSync(inbox, join(target, 'inbox'))
+      }
+      if (existsSync(join(dataDir, 'vault'))) {
+        // Their empty starter vault is set aside, not deleted.
+        if (existsSync(join(target, 'vault'))) renameSync(join(target, 'vault'), join(target, `vault.unused-${stamp}`))
+        renameSync(join(dataDir, 'vault'), join(target, 'vault'))
+      }
+      // Search indexes are rebuilt from the notes when the server starts: theirs (made for an empty brain) and the owner's.
+      for (const base of [target, dataDir]) for (const suffix of ['', '-wal', '-shm']) rmSync(join(base, `index.sqlite${suffix}`), { force: true })
       deviceDb?.prepare('UPDATE devices SET user_id = ? WHERE user_id = ?').run(user.id, OWNER_ID)
       for (const table of ['oauth_codes', 'oauth_tokens']) if (authDb && hasTable(authDb, table)) authDb.prepare(`UPDATE ${table} SET user_id = ? WHERE user_id = ?`).run(user.id, OWNER_ID)
     }

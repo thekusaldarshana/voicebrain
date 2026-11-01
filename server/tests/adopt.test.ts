@@ -57,9 +57,22 @@ describe('adoptOwner', () => {
     expect(owners('auth.sqlite', 'SELECT user_id FROM oauth_codes')).toEqual([])
   })
 
+  it('sets aside the empty vault and index the server made for the person, instead of refusing', async () => {
+    await mkdir(join(dir.dir, 'users', '1001', 'vault', 'wiki'), { recursive: true })
+    await writeFile(join(dir.dir, 'users', '1001', 'vault', 'wiki', 'index.md'), 'starter')
+    await writeFile(join(dir.dir, 'users', '1001', 'index.sqlite'), 'empty index')
+    adoptOwner(dir.dir, ALICE.email, true)
+    expect(await readFile(join(dir.dir, 'users', '1001', 'vault', 'wiki', 'me.md'), 'utf8')).toBe('my own page')
+    expect(await exists(join(dir.dir, 'users', '1001', 'index.sqlite'))).toBe(false)
+    const { readdir } = await import('node:fs/promises')
+    const aside = (await readdir(join(dir.dir, 'users', '1001'))).find(name => name.startsWith('vault.unused-'))
+    expect(aside).toBeTruthy()
+    expect(await readFile(join(dir.dir, 'users', '1001', aside as string, 'wiki', 'index.md'), 'utf8')).toBe('starter')
+  })
+
   it('refuses to merge into a person who already has notes, and leaves everything where it was', async () => {
     await mkdir(join(dir.dir, 'users', '1001', 'inbox', '44444444-4444-4444-8444-444444444444'), { recursive: true })
-    expect(() => adoptOwner(dir.dir, ALICE.email, true)).toThrow(/already has notes/)
+    expect(() => adoptOwner(dir.dir, ALICE.email, true)).toThrow(/already has notes of their own/)
     expect(await exists(join(dir.dir, 'inbox', NOTE_ID))).toBe(true)
     expect(owners('devices.sqlite', 'SELECT user_id FROM devices')).toEqual([OWNER_ID])
   })
