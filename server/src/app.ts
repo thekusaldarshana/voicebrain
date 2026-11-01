@@ -67,7 +67,8 @@ export function createApp(config: Config, options: PipelineOptions = {}, authOpt
   const app = express()
   app.set('trust proxy', 1)
   app.disable('x-powered-by')
-  app.use((_req, res, next) => { res.setHeader('X-Content-Type-Options', 'nosniff'); res.setHeader('Referrer-Policy', 'no-referrer'); next() })
+  // same-origin, not no-referrer: with no-referrer a browser sends `Origin: null` even on this site's own form posts, which the cross-site check has to refuse.
+  app.use((_req, res, next) => { res.setHeader('X-Content-Type-Options', 'nosniff'); res.setHeader('Referrer-Policy', 'same-origin'); next() })
 
   app.get('/health', (_req, res) => { res.json({ ok: true }) })
   if (authKit) app.use(authKit.router)

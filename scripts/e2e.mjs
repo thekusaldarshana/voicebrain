@@ -394,8 +394,11 @@ await step('delete everywhere asks twice, then removes the note from the server 
 await step('disconnecting cuts this device off on the server', async () => {
   const before = (await serverDevices()).length
   await tablet.goto(`${APP}/#/settings`)
-  await tablet.getByRole('button', { name: 'Sign out of this device' }).click()
+  // The top bar offers Sign out while connected and Sign in otherwise; signing out from it disconnects the same way.
+  assert.equal(await tablet.getByRole('link', { name: 'Sign in', exact: true }).count(), 0)
+  await tablet.getByRole('navigation', { name: 'Main navigation' }).getByRole('button', { name: 'Sign out', exact: true }).click()
   await tablet.getByRole('button', { name: 'Sign in to voicebrain' }).waitFor()
+  await tablet.getByRole('navigation', { name: 'Main navigation' }).getByRole('link', { name: 'Sign in', exact: true }).waitFor()
   await until(async () => (await serverDevices()).length === before - 1, 'the server to forget the device')
   await tablet.context().close()
 })

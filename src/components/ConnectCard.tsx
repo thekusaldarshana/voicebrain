@@ -3,8 +3,8 @@ import { Check, CircleAlert, ExternalLink, LoaderCircle } from 'lucide-react'
 import { connectDevice, type ConnectState } from '../lib/connect'
 import { DEFAULT_SERVER } from '../lib/defaults'
 import { normalizeEndpoint } from '../lib/endpoint'
-import { useSettings, useToast } from '../lib/hooks'
-import { disconnectThisDevice, fetchAccount, type AccountInfo } from '../lib/server'
+import { useSettings, useSignOut, useToast } from '../lib/hooks'
+import { fetchAccount, type AccountInfo } from '../lib/server'
 import { kickUploads, pingServer } from '../lib/uploader'
 
 const host = (endpoint: string) => { try { return new URL(endpoint).host } catch { return endpoint } }
@@ -77,12 +77,8 @@ export function ConnectCard({ autoStart = false }: { autoStart?: boolean }) {
 
   const cancel = () => { abort.current?.abort(); setState({ phase: 'idle' }) }
 
-  const disconnect = async () => {
-    await disconnectThisDevice(settings)
-    await update({ token: '', deviceId: '' })
-    setTest(null)
-    toast('Signed out of this device. Recordings stay on it until you connect again.')
-  }
+  const signOut = useSignOut()
+  const disconnect = async () => { await signOut(); setTest(null) }
 
   if (connected) {
     return <div className="connect">

@@ -4,6 +4,7 @@ import { onChanged } from './changes'
 import { SettingsContext, ToastContext, type SettingsValue } from './contexts'
 import { recorder, type RecorderSnapshot } from './recorder'
 import { removeNote } from './notes'
+import { disconnectThisDevice } from './server'
 import type { Note } from './types'
 
 export function useRecorder(): RecorderSnapshot {
@@ -78,3 +79,14 @@ export function useSettings(): SettingsValue {
 }
 
 export function useToast() { return useContext(ToastContext) }
+
+/** Signs this device out: the server forgets its token, and so does the app. Recordings stay on the device until it signs in again. */
+export function useSignOut(): () => Promise<void> {
+  const { settings, update } = useSettings()
+  const toast = useToast()
+  return useCallback(async () => {
+    await disconnectThisDevice(settings)
+    await update({ token: '', deviceId: '' })
+    toast('Signed out of this device. Recordings stay on it until you sign in again.')
+  }, [settings, update, toast])
+}

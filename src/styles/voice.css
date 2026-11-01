@@ -20,6 +20,8 @@ ul { padding: 0; list-style: none; }
 .brand-mark { display: grid; place-items: center; width: 31px; height: 31px; border: 1px solid var(--color-text-tertiary); border-radius: 50%; font-size: 17px; line-height: 1; font-weight: 600; letter-spacing: -.07em; }
 .top-nav { display: flex; align-items: center; gap: 6px; }
 .nav-link { display: inline-flex; align-items: center; gap: 7px; padding: 8px 12px; border-radius: var(--radius-pill); color: var(--color-text-muted); text-decoration: none; font-size: 13px; transition: color var(--motion-fast), background var(--motion-fast); }
+.nav-action { border: 1px solid var(--color-border, #2c2c2c); }
+button.nav-link { background: none; font: inherit; font-size: 13px; cursor: pointer; }
 .nav-link:hover, .nav-link:focus-visible { color: var(--color-text); background: var(--color-surface); }
 .nav-link[aria-current="page"] { color: var(--color-text); background: var(--color-surface-raised); }
 .nav-count { min-width: 18px; padding: 1px 6px; border-radius: var(--radius-pill); color: var(--color-canvas); background: var(--color-focus); font-size: 11px; font-weight: 650; line-height: 16px; text-align: center; font-variant-numeric: tabular-nums; }

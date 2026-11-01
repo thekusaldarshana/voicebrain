@@ -60,6 +60,15 @@ describe('the account page', () => {
     expect(await text(await browser.fetch(`${origin}/account`))).toContain('href="/auth/drive/start"')
   })
 
+  it('lets a browser send its own origin on a form post, and refuses a null or foreign one', async () => {
+    await boot(false)
+    const browser = await signedIn()
+    // With `Referrer-Policy: no-referrer` Chrome sends `Origin: null` on this site's own forms and the sign-out failed in real use.
+    expect((await browser.fetch(`${origin}/account`)).headers.get('referrer-policy')).toBe('same-origin')
+    expect((await browser.form(`${origin}/account/signout`, {}, { Origin: 'null' })).status).toBe(403)
+    expect((await browser.form(`${origin}/account/signout`, {}, { Origin: origin })).status).toBe(200)
+  })
+
   it('signs out this browser only when the request comes from this site', async () => {
     await boot(false)
     const browser = await signedIn()
