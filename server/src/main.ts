@@ -46,7 +46,7 @@ async function main() {
   console.log(`voicebrain listening on :${port}, data in ${config.dataDir}`)
   on('upload from the recorder app', true, '')
   on('transcription', config.stt !== null, 'set STT_BASE_URL')
-  on('task extraction', config.llm !== null, 'set LLM_BASE_URL and LLM_MODEL')
+  console.log(config.llm ? '  on   sorting notes with your own model server (LLM_BASE_URL); ChatGPT can sort too' : '  on   sorting notes by ChatGPT, through the MCP tools (no model or API key on this server)')
   const mode = authMode(config)
   on('sign-in with Google', mode === 'google', 'set GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET and PUBLIC_URL')
   if (mode === 'google') console.log(config.allowedEmails.length ? `        only ${config.allowedEmails.length} allowed email address${config.allowedEmails.length === 1 ? '' : 'es'} can sign in` : '        no ALLOWED_EMAILS: the first person to sign in claims this server')
