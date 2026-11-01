@@ -9,6 +9,9 @@ import { fileURLToPath } from 'node:url'
 import { chromium } from 'playwright-core'
 import { createApp } from '../server/src/app.ts'
 import { loadConfig } from '../server/src/config.ts'
+import { Devices } from '../server/src/devices.ts'
+import { OwnerOAuthProvider } from '../server/src/oauth.ts'
+import { Pairing } from '../server/src/pairing.ts'
 
 const root = fileURLToPath(new URL('..', import.meta.url))
 const out = join(root, 'public', 'guide')
@@ -95,6 +98,16 @@ await shot('note.png', page.locator('li.note-row[data-status]').filter({ hasText
 await page.goto(`${APP}/#/settings`)
 await page.getByText('you@example.com').waitFor()
 await shot('settings.png', page.locator('.settings-section').first())
+
+// 5. The two approval pages the server shows. They are rendered from the server's own page code, for a made-up person.
+const view = await context.newPage()
+const pairing = new Pairing({ devices: new Devices(join(dataDir, 'guide-devices.sqlite')), publicUrl: 'https://voicebrain.example.com' })
+const { userCode } = pairing.start('Phone', 'Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 Chrome/130.0 Mobile Safari/537.36', '203.0.113.7')
+await view.setContent(pairing.page(userCode, '', '', 'you@example.com'))
+await shot('approve-device.png', view.locator('main'))
+const oauth = new OwnerOAuthProvider({ dbPath: ':memory:', approver: { kind: 'google', userOf: () => null, signInUrl: () => '/', originOk: () => true }, staticToken: '' })
+await view.setContent(oauth.page('guide', { client_id: 'chatgpt', client_name: 'ChatGPT', redirect_uris: ['https://chatgpt.com/connector/oauth/example'] }, '', 'you@example.com'))
+await shot('approve-chatgpt.png', view.locator('main'))
 
 console.log(`done: ${(await readdir(out)).filter(name => name.endsWith('.png')).length} pictures in public/guide`)
 await browser.close()

@@ -31,9 +31,16 @@ export function GuidePage() {
 
       <section className="settings-section guide-section" id="guide-signin" aria-labelledby="g1">
         <h2 id="g1">1. Sign in</h2>
-        <p>Open voicebrain and tap <strong>Sign in</strong> (at the top, or on the Record screen). Your voicebrain server opens in a new tab. Sign in with your Google account and tap <strong>Approve</strong>. This screen connects by itself a moment later.</p>
+        <p>You sign in once on each phone or computer, with your Google account. There is no password to remember.</p>
         <Shot file="signin.png" alt="The Record screen before signing in, with a Sign in to voicebrain button" />
-        <p className="hint">Only people the owner added can sign in. If Google says your account is not on the list, ask them to add your address.</p>
+        <ol className="steps">
+          <li>Tap <strong>Sign in</strong> (at the top, or on the Record screen). Your voicebrain server opens in a new tab.</li>
+          <li>Google asks you to choose your account and sign in. Use the account the owner added for you.</li>
+          <li>voicebrain shows <strong>Connect a device</strong>, with your phone’s name and a code. Check the code is the one on your phone, then tap <strong>Approve</strong>.</li>
+          <li>Go back to the app. It connects by itself a moment later, and Sign in turns into Sign out.</li>
+        </ol>
+        <Shot file="approve-device.png" alt="The Connect a device page: the device name, the code, who you are signed in as, and Deny and Approve buttons" />
+        <p className="hint">Only people the owner added can sign in. If Google says your account is not on the list, ask them to add your address. Never approve a code you did not just see in your own app.</p>
       </section>
 
       <section className="settings-section guide-section" id="guide-record" aria-labelledby="g2">
@@ -72,6 +79,8 @@ export function GuidePage() {
         <ChatGptCard />
         <Shot wide file="chatgpt-1-add.png" alt="ChatGPT's Plugins page. Numbered: 1 the Plugins icon in the sidebar, 2 the Add button, 3 Add custom MCP server" />
         <Shot wide file="chatgpt-2-form.png" alt="The Add custom MCP server form filled in: name, Server URL ending in /mcp, Authentication set to OAuth, and the understand box ticked" />
+        <p>After you click <strong>Create as a plugin</strong>, ChatGPT opens voicebrain’s own page to ask for access. Check it says it is from ChatGPT, then tap <strong>Approve</strong>.</p>
+        <Shot file="approve-chatgpt.png" alt="The Approve access page: ChatGPT wants to read your voice notes and wiki, mark tasks done and write wiki pages, with Deny and Approve buttons" />
       </section>
 
       <section className="settings-section guide-section" id="guide-ask" aria-labelledby="g6">

@@ -138,7 +138,8 @@ export class OwnerOAuthProvider implements OAuthServerProvider {
     res.status(200).type('html').send(this.page(id, client))
   }
 
-  private page(id: string, client: OAuthClientInformationFull, message = '', signedInAs = ''): string {
+  /** The approval page's HTML. Public so the guide's pictures can be taken from the real page. */
+  page(id: string, client: OAuthClientInformationFull, message = '', signedInAs = ''): string {
     const name = escapeHtml(client.client_name ?? 'An application')
     const host = escapeHtml(new URL(client.redirect_uris[0] ?? 'https://unknown.invalid').host)
     return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="robots" content="noindex"><title>Approve access · voicebrain</title>
