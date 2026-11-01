@@ -84,6 +84,11 @@ export class Users {
     return Boolean(user) && (!this.hasAllowlist || this.allowed.has((user as User).email.toLowerCase()))
   }
 
+  /** Everyone who has signed in, whether or not they are still allowed. */
+  all(): User[] {
+    return (this.db.prepare('SELECT id, email, name, created_at FROM users ORDER BY created_at').all() as Array<{ id: string; email: string; name: string; created_at: string }>).map(row => ({ id: row.id, email: row.email, name: row.name, createdAt: row.created_at }))
+  }
+
   createSession(userId: string): { token: string; expiresAt: number } {
     const at = this.now()
     this.db.prepare('DELETE FROM sessions WHERE expires_at < ?').run(at)

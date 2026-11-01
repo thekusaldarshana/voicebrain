@@ -5,7 +5,7 @@ import { mcpAuthRouter } from '@modelcontextprotocol/sdk/server/auth/router.js'
 import { requireBearerAuth } from '@modelcontextprotocol/sdk/server/auth/middleware/bearerAuth.js'
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js'
 import { createAuth, messagePage } from './auth.ts'
-import { Brain } from './brain.ts'
+import type { Brain } from './brain.ts'
 import { authMode, type Config } from './config.ts'
 import { Devices } from './devices.ts'
 import { GoogleAuth, type GoogleEndpoints } from './google.ts'
@@ -13,7 +13,8 @@ import { handleIngest } from './ingest.ts'
 import { createMcpServer } from './mcp.ts'
 import { OwnerOAuthProvider, staticTokenVerifier, type Approver } from './oauth.ts'
 import { Pairing, PairingError } from './pairing.ts'
-import { Pipeline, type PipelineOptions } from './pipeline.ts'
+import type { Pipeline, PipelineOptions } from './pipeline.ts'
+import { Tenants, type Tenant } from './tenants.ts'
 import { UUID, errorText } from './util.ts'
 import { OWNER_ID, Users } from './users.ts'
 import { join } from 'node:path'
@@ -34,9 +35,9 @@ export interface App {
 export interface AuthOptions { googleEndpoints?: GoogleEndpoints }
 
 export function createApp(config: Config, options: PipelineOptions = {}, authOptions: AuthOptions = {}): App {
-  const brain = new Brain(config)
-  const pipeline = new Pipeline(brain, options)
-  brain.onNewWork = () => pipeline.kick()
+  // One brain per person (their notes, index and vault). The owner identity's is the one the tests and the old paths know.
+  const tenants = new Tenants(config, options)
+  const { brain, pipeline } = tenants.owner
   let provider: OwnerOAuthProvider | null = null
   let http: Server | null = null
   const devices = new Devices(join(config.dataDir, 'devices.sqlite'))
@@ -98,6 +99,9 @@ export function createApp(config: Config, options: PipelineOptions = {}, authOpt
     }
   })
 
+  /** The brain of whoever this request belongs to. Everything below reads and writes only through it. */
+  const tenantOf = (res: Response): Promise<Tenant> => tenants.for(String(res.locals.userId ?? OWNER_ID))
+
   const bearerOf = (req: Request) => { const header = req.headers.authorization ?? ''; return header.startsWith('Bearer ') ? header.slice(7) : '' }
   const ingestAuth = (req: Request, res: Response, next: NextFunction) => {
     const token = bearerOf(req)
@@ -134,16 +138,19 @@ export function createApp(config: Config, options: PipelineOptions = {}, authOpt
     if (!res.locals.admin && id !== mine) { res.status(403).json({ error: 'A device can only disconnect itself.' }); return }
     res.status(devices.revoke(id) ? 204 : 404).end()
   })
-  app.get('/v1/status', async (_req, res) => { res.json(await pipeline.status()) })
+  app.get('/v1/status', async (_req, res, next) => { try { res.json(await (await tenantOf(res)).pipeline.status()) } catch (error) { next(error) } })
   app.post('/v1/notes', async (req, res, next) => {
     try {
-      const meta = await handleIngest(req, res, brain.store, config)
-      if (meta) pipeline.kick()
+      const mine = await tenantOf(res)
+      const meta = await handleIngest(req, res, mine.brain.store, config)
+      if (meta) mine.pipeline.kick()
     } catch (error) { next(error) }
   })
-  app.post('/v1/notes/:id/retry', async (req, res) => {
-    const id = String(req.params.id)
-    res.status(UUID.test(id) && (await pipeline.retry(id)) ? 202 : 404).json({ ok: UUID.test(id) })
+  app.post('/v1/notes/:id/retry', async (req, res, next) => {
+    try {
+      const id = String(req.params.id)
+      res.status(UUID.test(id) && (await (await tenantOf(res)).pipeline.retry(id)) ? 202 : 404).json({ ok: UUID.test(id) })
+    } catch (error) { next(error) }
   })
   // Edits made in the app after upload. The user's own title always beats the one the model wrote.
   app.patch('/v1/notes/:id', express.json({ limit: '20kb' }), async (req, res, next) => {
@@ -153,14 +160,14 @@ export function createApp(config: Config, options: PipelineOptions = {}, authOpt
       const patch: { title?: string; tags?: string[] } = {}
       if (typeof body.title === 'string') patch.title = body.title
       if (Array.isArray(body.tags)) patch.tags = body.tags.filter((tag): tag is string => typeof tag === 'string')
-      const done = UUID.test(id) ? await brain.editNote(id, patch, 'user') : null
+      const done = UUID.test(id) ? await (await tenantOf(res)).brain.editNote(id, patch, 'user') : null
       if (done) res.json({ ok: true, title: done.title }); else res.status(404).json({ error: 'No such note.' })
     } catch (error) { next(error) }
   })
   // Deleting is final: audio, transcript, digest, vault page, search entries and tasks.
   app.delete('/v1/notes/:id', async (req, res, next) => {
     try {
-      const done = await brain.deleteNote(String(req.params.id))
+      const done = await (await tenantOf(res)).brain.deleteNote(String(req.params.id))
       res.status(done ? 204 : 404).end()
     } catch (error) { next(error) }
   })
@@ -223,12 +230,15 @@ export function createApp(config: Config, options: PipelineOptions = {}, authOpt
     const guard = requireBearerAuth({ verifier, ...(resourceMetadataUrl ? { resourceMetadataUrl } : {}), requiredScopes: ['mcp'] })
     // Who is asking: the user id rides on the token (req.auth.extra.userId, which the SDK hands to every tool) and on res.locals.
     const identify = (req: Request, res: Response, next: NextFunction) => { res.locals.userId = String(req.auth?.extra?.userId ?? OWNER_ID); next() }
-    app.post('/mcp', guard, identify, express.json({ limit: '2mb' }), async (req, res) => {
-      const server = createMcpServer(brain)
+    app.post('/mcp', guard, identify, express.json({ limit: '2mb' }), async (req, res, next) => {
+     try {
+      // The assistant sees only the brain of the person whose token this is.
+      const server = createMcpServer((await tenantOf(res)).brain)
       const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined, enableJsonResponse: true })
       res.on('close', () => { void transport.close(); void server.close() })
       await server.connect(transport)
       await transport.handleRequest(req, res, req.body)
+     } catch (error) { next(error) }
     })
     const notAllowed = (_req: Request, res: Response) => { res.status(405).json({ jsonrpc: '2.0', error: { code: -32000, message: 'Method not allowed.' }, id: null }) }
     app.get('/mcp', guard, identify, notAllowed)
@@ -246,8 +256,8 @@ export function createApp(config: Config, options: PipelineOptions = {}, authOpt
     brain,
     pipeline,
     async start() {
-      await brain.init()
-      if (config.workerEnabled) pipeline.start()
+      // Everyone who may still sign in gets their brain (and worker) up now; anyone else's is opened when they first ask.
+      await tenants.start(users.all().filter(user => users.isActive(user.id)).map(user => user.id))
     },
     listen(port = config.port) {
       return new Promise((resolve, reject) => {
@@ -256,12 +266,11 @@ export function createApp(config: Config, options: PipelineOptions = {}, authOpt
       })
     },
     async close() {
-      await pipeline.stop()
       await new Promise<void>(done => { if (!http) { done(); return } http.closeAllConnections?.(); http.close(() => done()) })
       provider?.close()
       users.close()
       devices.close()
-      brain.close()
+      await tenants.close()
     },
   }
 }

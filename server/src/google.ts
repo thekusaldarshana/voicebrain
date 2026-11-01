@@ -1,5 +1,5 @@
 import { createHash, createPublicKey, randomBytes, timingSafeEqual, verify, type KeyObject } from 'node:crypto'
-import type { Profile } from './users.ts'
+import { OWNER_ID, type Profile } from './users.ts'
 
 export interface GoogleEndpoints { authorize: string; token: string; jwks: string; issuers: string[] }
 
@@ -159,9 +159,10 @@ export class GoogleAuth {
     if (typeof claims.iat === 'number' && claims.iat > seconds + 300) throw bad('issued in the future')
     if (typeof claims.nonce !== 'string' || !same(claims.nonce, nonce)) throw bad('nonce')
     if (claims.email_verified !== true && claims.email_verified !== 'true') throw new SignInError(403, 'Your Google email address is not verified.')
-    const sub = clean(claims.sub, 255)
+    // The id becomes a folder name (data/users/<id>) and a storage key, so it must be a plain word and never the owner identity.
+    const sub = clean(claims.sub, 64)
     const email = clean(claims.email, 254).toLowerCase()
-    if (!sub || !/^[^@\s]+@[^@\s]+$/.test(email)) throw bad('identity')
+    if (!/^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$/.test(sub) || sub === OWNER_ID || !/^[^@\s]+@[^@\s]+$/.test(email)) throw bad('identity')
     return { sub, email, name: clean(claims.name, 100) || email }
   }
 }
