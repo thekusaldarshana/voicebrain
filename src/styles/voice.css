@@ -215,3 +215,4 @@ a.secondary-button, a.primary-button { text-decoration: none; }
   .chatgpt input.mono { flex: none; width: 100%; font-size: 12px; }
   .chatgpt .secondary-button { align-self: flex-start; }
 }
+.shot.wide img { max-width: 100%; }

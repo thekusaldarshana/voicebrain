@@ -410,6 +410,7 @@ await step('the ChatGPT card hands over this server’s address, and the user gu
   await page.goto(`${APP}/#/pair?e=${encodeURIComponent(ENDPOINT)}&t=${TOKEN}&n=E2E%20phone`)
   await page.getByRole('heading', { name: 'Settings', level: 1 }).waitFor()
   assert.equal(await page.getByLabel('Address to give ChatGPT').inputValue(), `${ENDPOINT}/mcp`)
+  await page.getByText('in the ChatGPT desktop app').first().waitFor()
   await page.getByRole('button', { name: 'Copy' }).click()
   await page.getByText('Address copied. Paste it into ChatGPT.').waitFor()
   assert.equal(await page.evaluate(() => navigator.clipboard.readText()), `${ENDPOINT}/mcp`)

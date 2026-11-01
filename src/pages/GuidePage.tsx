@@ -2,10 +2,13 @@ import { useState } from 'react'
 import { ChatGptCard } from '../components/ChatGptCard'
 
 /** A picture from public/guide. A picture that is not there is simply left out, so the guide never shows a broken image. */
-function Shot({ file, alt }: { file: string; alt: string }) {
+function Shot({ file, alt, wide = false }: { file: string; alt: string; wide?: boolean }) {
   const [missing, setMissing] = useState(false)
   if (missing) return null
-  return <figure className="shot"><img src={`${import.meta.env.BASE_URL}guide/${file}`} alt={alt} loading="lazy" onError={() => setMissing(true)} /></figure>
+  const src = `${import.meta.env.BASE_URL}guide/${file}`
+  const image = <img src={src} alt={alt} loading="lazy" onError={() => setMissing(true)} />
+  // A wide picture is small on a phone, so it opens full size when tapped.
+  return <figure className={wide ? 'shot wide' : 'shot'}>{wide ? <a href={src} target="_blank" rel="noopener noreferrer" aria-label={`Open full size: ${alt}`}>{image}</a> : image}</figure>
 }
 
 const questions = [
@@ -67,9 +70,8 @@ export function GuidePage() {
       <section className="settings-section guide-section" id="guide-chatgpt" aria-labelledby="g5">
         <h2 id="g5">5. Connect ChatGPT</h2>
         <ChatGptCard />
-        <Shot file="chatgpt-1-developer-mode.png" alt="ChatGPT Settings, Connectors, Advanced, with Developer mode switched on" />
-        <Shot file="chatgpt-2-create.png" alt="Creating the voicebrain connector in ChatGPT" />
-        <Shot file="chatgpt-3-sign-in.png" alt="The voicebrain sign-in page opened by ChatGPT" />
+        <Shot wide file="chatgpt-1-add.png" alt="ChatGPT's Plugins page. Numbered: 1 the Plugins icon in the sidebar, 2 the Add button, 3 Add custom MCP server" />
+        <Shot wide file="chatgpt-2-form.png" alt="The Add custom MCP server form filled in: name, Server URL ending in /mcp, Authentication set to OAuth, and the understand box ticked" />
       </section>
 
       <section className="settings-section guide-section" id="guide-ask" aria-labelledby="g6">
@@ -77,7 +79,6 @@ export function GuidePage() {
         <p>Once connected, just talk to ChatGPT about your notes. Try:</p>
         <ul>{questions.map(question => <li key={question}>“{question}”</li>)}</ul>
         <p>Asking is always allowed. When ChatGPT wants to <strong>change</strong> something (rename a note, mark a task done), it asks you first. That is ChatGPT’s own safety step and it cannot be switched off from here. Names it gives your notes show up in this app within about half a minute.</p>
-        <Shot file="chatgpt-4-use.png" alt="A ChatGPT answer that uses voicebrain" />
       </section>
 
       <section className="settings-section guide-section" id="guide-install" aria-labelledby="g7">
@@ -101,8 +102,8 @@ export function GuidePage() {
           <dt>“This Google account is not on the list.”</dt><dd>Ask the owner to add your address, then try again.</dd>
           <dt>Notes show “Waiting”.</dt><dd>They are saved on your phone and upload when you are online and signed in. Open Settings to check you are signed in.</dd>
           <dt>“Google Drive is not connected.”</dt><dd>Open Settings and tap Connect Google Drive. This also happens if you removed voicebrain’s access in your Google account.</dd>
-          <dt>ChatGPT cannot see my notes.</dt><dd>Check the connector is added to the chat (the + menu), and that you signed in with the same Google account as here.</dd>
-          <dt>ChatGPT does not know about a new feature.</dt><dd>Open the connector in ChatGPT and press Refresh.</dd>
+          <dt>ChatGPT cannot see my notes.</dt><dd>Check voicebrain is listed under Installed on ChatGPT’s Plugins page, and that you signed in with the same Google account as here. Try asking “Using voicebrain, …”.</dd>
+          <dt>ChatGPT does not know about a new feature.</dt><dd>Open the Plugins page and press the refresh button next to Add.</dd>
           <dt>The app looks old.</dt><dd>Close it completely and open it again. It updates itself in the background.</dd>
         </dl>
       </section>
