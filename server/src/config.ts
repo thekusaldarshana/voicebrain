@@ -10,7 +10,13 @@ export interface Config {
   publicUrl: string
   ingestToken: string
   mcpToken: string
+  /** Legacy sign-in. Only used when Google sign-in is not configured. */
   ownerPassphrase: string
+  /** Google OIDC client (Google Cloud Console, "Web application"). Both empty = Google sign-in is off. */
+  googleClientId: string
+  googleClientSecret: string
+  /** Lower-case emails allowed to sign in. Empty = the first user to sign in claims the instance. */
+  allowedEmails: string[]
   allowedOrigin: string
   /** IANA zone used for "today" and for notes written in chat. Example: Asia/Colombo */
   ownerTimezone: string
@@ -23,6 +29,10 @@ export interface Config {
   insecure: boolean
 }
 
+/** How people prove who they are: Google, the legacy passphrase, or not at all (static tokens only). */
+export const authMode = (config: Pick<Config, 'googleClientId' | 'googleClientSecret' | 'ownerPassphrase'>): 'google' | 'passphrase' | 'none' =>
+  config.googleClientId && config.googleClientSecret ? 'google' : config.ownerPassphrase ? 'passphrase' : 'none'
+
 const text = (value: string | undefined, fallback = '') => (value ?? fallback).trim()
 const trimSlash = (value: string) => value.replace(/\/+$/, '')
 
@@ -33,7 +43,13 @@ export function loadConfig(env: Record<string, string | undefined> = process.env
   const ownerPassphrase = text(env.OWNER_PASSPHRASE)
   if (ownerPassphrase && ownerPassphrase.length < 12) throw new Error('OWNER_PASSPHRASE must be at least 12 characters.')
   const publicUrl = trimSlash(text(env.PUBLIC_URL))
-  if (ownerPassphrase && !publicUrl) throw new Error('PUBLIC_URL is required when OWNER_PASSPHRASE is set (ChatGPT signs in through it).')
+  const googleClientId = text(env.GOOGLE_CLIENT_ID)
+  const googleClientSecret = text(env.GOOGLE_CLIENT_SECRET)
+  if (Boolean(googleClientId) !== Boolean(googleClientSecret)) throw new Error('Set both GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET, or neither.')
+  if ((ownerPassphrase || googleClientId) && !publicUrl) throw new Error('PUBLIC_URL is required when Google sign-in or OWNER_PASSPHRASE is set (sign-in and ChatGPT go through it).')
+  const allowedEmails = text(env.ALLOWED_EMAILS).split(/[\s,;]+/).map(email => email.toLowerCase()).filter(Boolean)
+  const badEmail = allowedEmails.find(email => !/^[^@\s]+@[^@\s]+$/.test(email))
+  if (badEmail) throw new Error('ALLOWED_EMAILS must be a comma-separated list of email addresses.')
 
   const sttProvider = text(env.STT_PROVIDER) === 'gemini' || text(env.STT_BASE_URL).includes('generativelanguage.googleapis.com') ? 'gemini' : 'openai'
   const sttBase = trimSlash(text(env.STT_BASE_URL) || (sttProvider === 'gemini' && env.STT_PROVIDER ? 'https://generativelanguage.googleapis.com/v1beta' : ''))
@@ -46,6 +62,9 @@ export function loadConfig(env: Record<string, string | undefined> = process.env
     ingestToken,
     mcpToken: text(env.MCP_TOKEN),
     ownerPassphrase,
+    googleClientId,
+    googleClientSecret,
+    allowedEmails,
     allowedOrigin: text(env.ALLOWED_ORIGIN, '*'),
     ownerTimezone: text(env.OWNER_TIMEZONE, 'UTC'),
     stt: sttBase ? { provider: sttProvider, baseUrl: sttBase, apiKey: text(env.STT_API_KEY), model: text(env.STT_MODEL, sttProvider === 'gemini' ? 'gemini-3.5-transcribe' : 'whisper-1'), language: text(env.STT_LANGUAGE, 'en'), maxMb: Number(env.STT_MAX_MB ?? (sttProvider === 'gemini' ? 14 : 24)), prompt: text(env.STT_PROMPT) } : null,
