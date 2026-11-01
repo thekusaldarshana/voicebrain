@@ -110,7 +110,7 @@ describe('signing in with the owner passphrase', () => {
     expect(tokens).toMatchObject({ token_type: 'Bearer', expires_in: 3600 })
     const client = await connect(tokens.access_token)
     const tools = (await client.listTools()).tools.map(tool => tool.name).sort()
-    expect(tools).toEqual(['add_note', 'brief', 'get_note', 'list_wiki', 'open_loops', 'read_wiki', 'recent', 'search', 'update_task', 'write_wiki'])
+    expect(tools).toEqual(['add_note', 'brief', 'get_note', 'list_wiki', 'open_loops', 'read_wiki', 'recent', 'rename_note', 'search', 'update_task', 'write_wiki'])
     await client.close()
   })
 
@@ -168,7 +168,7 @@ describe('signing in with the owner passphrase', () => {
     expect(next.access_token).not.toBe(tokens.access_token)
     expect((await exchange({ grant_type: 'refresh_token', refresh_token: tokens.refresh_token, client_id: client })).status).toBe(400)
     const connected = await connect(next.access_token)
-    expect((await connected.listTools()).tools.length).toBe(10)
+    expect((await connected.listTools()).tools.length).toBe(11)
     await connected.close()
   })
 
@@ -178,7 +178,7 @@ describe('signing in with the owner passphrase', () => {
     await server.stop()
     server = await run(config)
     const client = await connect(tokens.access_token)
-    expect((await client.listTools()).tools.length).toBe(10)
+    expect((await client.listTools()).tools.length).toBe(11)
     await client.close()
   })
 
@@ -191,7 +191,7 @@ describe('signing in with the owner passphrase', () => {
 
   it('also accepts the static token for tools that cannot do OAuth', async () => {
     const client = await connect(MCP_TOKEN)
-    expect((await client.listTools()).tools.length).toBe(10)
+    expect((await client.listTools()).tools.length).toBe(11)
     await client.close()
   })
 
@@ -206,7 +206,8 @@ describe('the tools', () => {
     const client = await connect(MCP_TOKEN)
     const { text, isError } = await call(client, 'brief', { topic: 'weekly review for Trapper' })
     expect(isError).toBe(false)
-    expect(text).toContain('[3f2b1c0e] 2026-10-30 09:12')
+    expect(text).toMatch(/“Bank call and weekly review idea” — .*09:12/)
+    expect(text).not.toMatch(/\[3f2b1c0e\]/) // ids are not the way notes are named
     expect(text).toContain('Call the bank'.slice(0, 0)) // tasks are matched by topic, so the bank task is not here
     expect(text).toContain('project: Trapper')
     const overview = (await call(client, 'brief')).text
@@ -224,14 +225,14 @@ describe('the tools', () => {
     expect(note.text).toContain('Remind me to call the bank tomorrow.')
     expect((await call(client, 'get_note', { id: 'deadbeef' })).isError).toBe(true)
     const loops = await call(client, 'open_loops')
-    expect(loops.text).toContain('3f2b1c0e#0 Call the bank · due 2026-10-31')
+    expect(loops.text).toMatch(/- Call the bank — due [^(]+\(OVERDUE\) · from “Bank call and weekly review idea”, [^(]+\(ref 3f2b1c0e#0\)/) // the dates read as "yesterday" or "Sat 31 Oct" depending on the day the test runs
     expect((await call(client, 'open_loops', { project: 'nothing' })).text).toBe('No open tasks.')
     await client.close()
   })
 
   it('marks a task done by its short id', async () => {
     const client = await connect(MCP_TOKEN)
-    expect((await call(client, 'update_task', { task_id: '3f2b1c0e#0', status: 'done' })).text).toContain('Marked 3f2b1c0e#0 as done')
+    expect((await call(client, 'update_task', { task_id: '3f2b1c0e#0', status: 'done' })).text).toBe('Marked “Call the bank” as done.')
     expect((await call(client, 'open_loops')).text).toBe('No open tasks.')
     expect((await call(client, 'update_task', { task_id: '3f2b1c0e#0', status: 'open' })).isError).toBe(false)
     expect((await call(client, 'update_task', { task_id: 'zzzzzzzz#0', status: 'done' })).isError).toBe(true)
@@ -241,7 +242,7 @@ describe('the tools', () => {
 
   it('saves a note from chat, and keeps the wiki', async () => {
     const client = await connect(MCP_TOKEN)
-    expect((await call(client, 'add_note', { text: 'Remember the kayak trip in March.' })).text).toMatch(/Saved as note \[[0-9a-f]{8}\]/)
+    expect((await call(client, 'add_note', { text: 'Remember the kayak trip in March.' })).text).toMatch(/^Saved as a new note\./)
     expect((await call(client, 'search', { query: 'kayak' })).text).toContain('kayak')
     expect((await call(client, 'write_wiki', { path: 'trips.md', content: '# Trips\nKayak in March.', mode: 'replace' })).text).toContain('wiki/trips.md')
     expect((await call(client, 'list_wiki')).text).toContain('wiki/trips.md')

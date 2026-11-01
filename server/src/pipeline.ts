@@ -2,7 +2,7 @@ import type { Brain } from './brain.ts'
 import { digestNote } from './digest.ts'
 import { transcribe, type Fetch } from './stt.ts'
 import type { Digest, NoteState } from './types.ts'
-import { PermanentError, errorText, retryDelayMs } from './util.ts'
+import { NoteGone, PermanentError, errorText, retryDelayMs } from './util.ts'
 
 export interface PipelineOptions { fetch?: Fetch; retryDelay?: (attempts: number) => number; log?: (message: string) => void }
 
@@ -117,6 +117,7 @@ export class Pipeline {
       if (!row || (digest && !row.digested)) await this.brain.fileNote(id)
       if (state.attempts || state.lastError) await store.writeState(id, { attempts: 0, nextAttemptAt: null, lastError: null, failed: false, stage: null })
     } catch (error) {
+      if (error instanceof NoteGone || !(await store.has(id))) return // deleted while we were working on it
       const attempts = state.attempts + 1
       const permanent = error instanceof PermanentError || attempts >= config.maxAttempts
       this.log(`${stage ?? 'process'} failed for ${id.slice(0, 8)} (attempt ${attempts}${permanent ? ', giving up' : ''}): ${errorText(error)}`)

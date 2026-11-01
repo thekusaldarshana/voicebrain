@@ -3,7 +3,8 @@ import { mkdir, readFile, readdir, rm, stat } from 'node:fs/promises'
 import { join, resolve, sep } from 'node:path'
 import { promisify } from 'node:util'
 import type { NoteRow, TaskRow } from './index.ts'
-import type { Digest, NoteMeta, Segment, TaskStatus, Transcript } from './types.ts'
+import { displayTags, displayTitle } from './titles.ts'
+import type { Digest, NoteEdits, NoteMeta, Segment, TaskStatus, Transcript } from './types.ts'
 import { Mutex, errorText, formatClock, formatDuration, localParts, slugify, writeFileAtomic } from './util.ts'
 
 const exec = promisify(execFile)
@@ -16,6 +17,7 @@ This vault is written by **voicebrain** from voice notes, and read by an assista
 ## Layers
 - \`notes/\` one file per voice note: summary, extracted items with the exact words they came from, marked moments, full transcript. **Generated. Do not edit**: it is rewritten when the note is re-processed.
 - \`daily/\`, \`projects/\`, \`people/\`, \`tasks.md\` **Generated views.** Do not edit.
+- Generated files are kept out of git on purpose: a deleted note leaves no copy behind in the history. Git versions what is written by hand or by the assistant (\`wiki/\`, \`state/\`).
 - \`wiki/\` **Yours and the assistant's.** Free-form pages that synthesize what the notes say. Nothing generated ever touches this folder.
 - The raw audio and word-for-word transcripts live outside the vault in \`inbox/<id>/\`. They are the source of truth and are never changed.
 
@@ -71,10 +73,10 @@ export function wordsAt(segments: Segment[], seconds: number): string | null {
 
 const box = (status: TaskStatus | undefined) => (status === 'done' ? '[x]' : status === 'dismissed' ? '[-]' : '[ ]')
 
-export function renderNote(meta: NoteMeta, transcript: Transcript, digest: Digest | null, statuses: Map<number, TaskStatus>): string {
+export function renderNote(meta: NoteMeta, transcript: Transcript, digest: Digest | null, statuses: Map<number, TaskStatus>, edits: NoteEdits | null = null): string {
   const when = localParts(meta.createdAt, meta.utcOffsetMinutes)
-  const title = digest?.title || meta.title || 'Voice note'
-  const tags = [...new Set([...meta.tags, ...(digest?.tags ?? [])])]
+  const title = displayTitle(meta, digest, edits)
+  const tags = displayTags(meta, digest, edits)
   const projects = [...new Set([...(digest?.projects.map(project => project.name) ?? []), ...(digest?.tasks.map(task => task.project).filter((name): name is string => Boolean(name)) ?? [])])]
   const people = digest?.people.map(person => person.name) ?? []
   const lines: string[] = [
@@ -211,11 +213,28 @@ export class Vault {
         const hasRepo = await stat(join(this.root, '.git')).then(() => true, () => false)
         if (!hasRepo) await exec('git', ['init', '-q', '-b', 'main'], { cwd: this.root })
         this.git = true
+        await this.keepGeneratedFilesOutOfGit()
         await this.commit('Initialize vault')
       } catch (error) {
         console.warn(`git is unavailable, the vault will not be versioned: ${errorText(error)}`)
       }
     }
+  }
+
+  /**
+   * Git versions only what a person or the assistant writes. Generated pages (notes, daily, projects, people,
+   * tasks.md) are rebuilt from the inbox at any time, and keeping them out of history means deleting a note
+   * really removes its text. A vault created by an earlier version has them tracked, so they are untracked once.
+   */
+  private async keepGeneratedFilesOutOfGit(): Promise<void> {
+    // Anchored with a leading slash: a bare "projects/" would also hide the assistant's wiki/projects/ pages.
+    const rules = ['/notes/', '/daily/', '/projects/', '/people/', '/tasks.md']
+    const path = join(this.root, '.gitignore')
+    const current = await readFile(path, 'utf8').catch(() => '')
+    if (rules.every(rule => current.split('\n').includes(rule))) return
+    await writeFileAtomic(path, `# Generated from the notes and rebuilt automatically. Kept out of git so a deleted note leaves no copy in the history.\n${rules.join('\n')}\n`)
+    await exec('git', ['rm', '-r', '-q', '--cached', '--ignore-unmatch', 'notes', 'daily', 'projects', 'people', 'tasks.md'], { cwd: this.root })
+    await this.commit('Stop versioning generated files')
   }
 
   private async seed(rel: string, content: string) {

@@ -1,8 +1,8 @@
 import { randomUUID } from 'node:crypto'
 import { mkdir, readdir, rename, rm, stat } from 'node:fs/promises'
 import { join } from 'node:path'
-import type { Digest, NoteMeta, NoteState, Transcript } from './types.ts'
-import { UUID, readJson, writeFileAtomic, writeJson } from './util.ts'
+import type { Digest, NoteEdits, NoteMeta, NoteState, Transcript } from './types.ts'
+import { NoteGone, UUID, readJson, writeFileAtomic, writeJson } from './util.ts'
 
 /**
  * data/inbox/<id>/
@@ -11,6 +11,7 @@ import { UUID, readJson, writeFileAtomic, writeJson } from './util.ts'
  *   transcript.json  the raw words: the permanent record
  *   digest.json      model extraction (regenerable)
  *   state.json       retry bookkeeping
+ *   edits.json       later edits to the title and tags (by the user or the assistant)
  */
 export class Store {
   readonly dataDir: string
@@ -32,8 +33,12 @@ export class Store {
     try { await stat(join(this.dir(id), 'meta.json')); return true } catch { return false }
   }
 
+  /** Ids of real notes. A folder without meta.json (a half-written or half-deleted note) does not count. */
   async ids(): Promise<string[]> {
-    try { return (await readdir(this.inbox)).filter(name => UUID.test(name)).sort() } catch { return [] }
+    let names: string[]
+    try { names = (await readdir(this.inbox)).filter(name => UUID.test(name)).sort() } catch { return [] }
+    const present = await Promise.all(names.map(name => this.has(name)))
+    return names.filter((_, index) => present[index])
   }
 
   meta(id: string) { return readJson<NoteMeta>(join(this.dir(id), 'meta.json')) }
@@ -43,9 +48,22 @@ export class Store {
     return (await readJson<NoteState>(join(this.dir(id), 'state.json'))) ?? { attempts: 0, nextAttemptAt: null, lastError: null, failed: false, stage: null }
   }
 
-  writeTranscript(id: string, transcript: Transcript) { return writeJson(join(this.dir(id), 'transcript.json'), transcript) }
-  writeDigest(id: string, digest: Digest) { return writeJson(join(this.dir(id), 'digest.json'), digest) }
-  writeState(id: string, state: NoteState) { return writeJson(join(this.dir(id), 'state.json'), state) }
+  edits(id: string) { return readJson<NoteEdits>(join(this.dir(id), 'edits.json')) }
+
+  /** Every write checks the note still exists, so work that finishes after a delete cannot bring a note back. */
+  private async write(id: string, file: string, value: unknown): Promise<void> {
+    if (!(await this.has(id))) throw new NoteGone(id)
+    await writeJson(join(this.dir(id), file), value)
+  }
+  writeTranscript(id: string, transcript: Transcript) { return this.write(id, 'transcript.json', transcript) }
+  writeDigest(id: string, digest: Digest) { return this.write(id, 'digest.json', digest) }
+  writeState(id: string, state: NoteState) { return this.write(id, 'state.json', state) }
+  writeEdits(id: string, edits: NoteEdits) { return this.write(id, 'edits.json', edits) }
+
+  /** Removes the audio, the transcript and everything else stored for the note. */
+  async deleteNote(id: string): Promise<void> {
+    await rm(this.dir(id), { recursive: true, force: true })
+  }
 
   audioPath(meta: NoteMeta): string | null {
     return meta.audioFile ? join(this.dir(meta.id), meta.audioFile) : null

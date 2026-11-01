@@ -4,9 +4,10 @@ import type { Config } from './config.ts'
 import type { Hit, NoteRow, TaskRow } from './index.ts'
 import { Index } from './index.ts'
 import { Store } from './store.ts'
-import type { NoteMeta, TaskStatus, TaskStatusEntry } from './types.ts'
+import { cleanTags, cleanTitle, userNamed } from './titles.ts'
+import type { NoteEdits, NoteMeta, TaskStatus, TaskStatusEntry } from './types.ts'
 import { Vault, entityPath, notePath, renderDaily, renderEntity, renderNote, renderTasks } from './vault.ts'
-import { PermanentError, readJson, writeJson } from './util.ts'
+import { PermanentError, UUID, localParts, readJson, writeJson } from './util.ts'
 import { join } from 'node:path'
 
 const STATUS_FILE = 'state/task-status.json'
@@ -74,7 +75,7 @@ export class Brain {
     for (const id of await this.store.ids()) {
       const [meta, transcript] = await Promise.all([this.store.meta(id), this.store.transcript(id)])
       if (!meta || !transcript) continue
-      this.index.upsertNote(meta, transcript, await this.store.digest(id), notePath(meta))
+      this.index.upsertNote(meta, transcript, await this.store.digest(id), notePath(meta), await this.store.edits(id))
       count += 1
     }
     await this.syncWiki()
@@ -95,18 +96,17 @@ export class Brain {
   fileNote(id: string): Promise<void> {
     return this.vault.exclusive(async () => {
       await this.fileNoteLocked(id)
-      const row = this.index.note(id)
-      if (row) await this.vault.commit(`${row.day} ${row.time} ${row.title}`)
+      await this.vault.commit('update notes') // only hand-written and state files are versioned; titles never go into history
     })
   }
 
   private async fileNoteLocked(id: string): Promise<void> {
-    const [meta, transcript, digest] = await Promise.all([this.store.meta(id), this.store.transcript(id), this.store.digest(id)])
+    const [meta, transcript, digest, edits] = await Promise.all([this.store.meta(id), this.store.transcript(id), this.store.digest(id), this.store.edits(id)])
     if (!meta || !transcript) return
     const before = this.index.entitiesOf(id)
     const path = notePath(meta)
-    await this.vault.write(path, renderNote(meta, transcript, digest, this.index.taskStatuses(id)))
-    this.index.upsertNote(meta, transcript, digest, path)
+    await this.vault.write(path, renderNote(meta, transcript, digest, this.index.taskStatuses(id), edits))
+    this.index.upsertNote(meta, transcript, digest, path, edits)
     const row = this.index.note(id) as NoteRow
     await this.refreshDay(row.day)
     const seen = new Set<string>()
@@ -121,6 +121,7 @@ export class Brain {
 
   private async refreshDay(day: string): Promise<void> {
     const notes = this.index.notesForDay(day)
+    if (!notes.length) { await this.vault.remove(`daily/${day}.md`); return }
     await this.vault.write(`daily/${day}.md`, renderDaily(day, notes, new Map(notes.map(note => [note.id, this.index.tasksOfNote(note.id)]))))
   }
 
@@ -188,8 +189,89 @@ export class Brain {
       await writeJson(join(this.vault.root, STATUS_FILE), all)
       this.index.setTaskStatus(taskId, status, updatedAt)
       await this.fileNoteLocked(task.note_id)
-      await this.vault.commit(`task ${status}: ${task.text.slice(0, 60)}`)
+      await this.vault.commit(`task ${status}`)
       return this.index.task(taskId) ?? null
+    })
+  }
+
+  // ---- changing and removing notes ----
+
+  /** Finds a note from what the assistant has: a reference code or the title (or part of it). */
+  resolveNote(ref: string): { id: string } | { candidates: NoteRow[] } | null {
+    const text = ref.trim()
+    if (!text) return null
+    const byRef = this.index.resolveId(text)
+    if (byRef) return { id: byRef }
+    const rows = this.index.byTitle(text)
+    if (rows.length === 1) return { id: (rows[0] as NoteRow).id }
+    return rows.length ? { candidates: rows } : null
+  }
+
+  /** Finds a task from a reference code (`ab12cd34#0`) or from words in its text. */
+  resolveTask(ref: string): { task: TaskRow } | { candidates: TaskRow[] } | null {
+    const text = ref.trim()
+    const code = /^([0-9a-f]{8,})#(\d+)$/i.exec(text)
+    if (code) {
+      const noteId = this.index.resolveId(code[1] as string)
+      const task = noteId ? this.index.task(`${noteId}#${code[2]}`) : undefined
+      return task ? { task } : null
+    }
+    if (!text) return null
+    const rows = this.index.findTasks(text)
+    if (rows.length === 1) return { task: rows[0] as TaskRow }
+    const exact = rows.filter(row => row.text.toLowerCase() === text.toLowerCase())
+    if (exact.length === 1) return { task: exact[0] as TaskRow }
+    return rows.length ? { candidates: rows } : null
+  }
+
+  /**
+   * Renames a note or changes its tags. The user's own name always wins: an assistant rename is refused
+   * when the user has named the note, and a user rename replaces whatever was there.
+   */
+  async editNote(id: string, patch: { title?: string; tags?: string[] }, by: 'user' | 'assistant'): Promise<{ title: string; applied: boolean } | null> {
+    const meta = (await this.store.has(id)) ? await this.store.meta(id) : null
+    if (!meta) return null
+    const edits: NoteEdits = (await this.store.edits(id)) ?? { updatedAt: '' }
+    if (by === 'assistant') {
+      const named = userNamed(meta, edits)
+      if (named) return { title: named, applied: false }
+      edits.assistantTitle = cleanTitle(patch.title)
+    } else {
+      if (patch.title !== undefined) edits.userTitle = cleanTitle(patch.title)
+      if (patch.tags !== undefined) edits.tags = cleanTags(patch.tags)
+    }
+    edits.updatedAt = this.now().toISOString()
+    await this.store.writeEdits(id, edits)
+    await this.fileNote(id)
+    return { title: this.index.note(id)?.title ?? edits.userTitle ?? edits.assistantTitle ?? '', applied: true }
+  }
+
+  /**
+   * Deletes a note for good: the audio, the transcript, the digest, its page in the vault, its search entries,
+   * and its tasks. Pages the assistant wrote in wiki/ are not touched, even if they quote the note.
+   */
+  async deleteNote(id: string): Promise<{ title: string } | null> {
+    if (!UUID.test(id) || !(await this.store.has(id))) return null
+    return this.vault.exclusive(async () => {
+      const meta = await this.store.meta(id)
+      if (!meta) return null
+      const row = this.index.note(id)
+      const entities = this.index.entitiesOf(id)
+      const day = row?.day ?? localParts(meta.createdAt, meta.utcOffsetMinutes).date
+      await this.store.deleteNote(id)
+      await this.vault.remove(row?.vault_path ?? notePath(meta))
+      this.index.removeNote(id)
+      const statuses = await this.statuses()
+      const mine = Object.keys(statuses).filter(key => key.startsWith(`${id}#`))
+      if (mine.length) {
+        for (const key of mine) delete statuses[key]
+        await writeJson(join(this.vault.root, STATUS_FILE), statuses)
+      }
+      await this.refreshDay(day)
+      for (const entity of entities) await this.refreshEntity(entity.kind as 'person' | 'project', entity.slug)
+      await this.vault.write('tasks.md', renderTasks(this.index.openTasks(), this.today()))
+      await this.vault.commit('delete a note')
+      return { title: row?.title ?? 'Voice note' }
     })
   }
 
@@ -197,11 +279,13 @@ export class Brain {
   async addTextNote(text: string, title = ''): Promise<string> {
     const now = this.now()
     const meta: NoteMeta = {
-      id: randomUUID(), createdAt: now.toISOString(), durationMs: 0, mime: 'text/plain', size: text.length, title: title.slice(0, 140),
+      id: randomUUID(), createdAt: now.toISOString(), durationMs: 0, mime: 'text/plain', size: text.length, title: '',
       tags: [], marks: [], recovered: false, source: 'text', device: 'assistant', timezone: this.config.ownerTimezone,
       utcOffsetMinutes: tzOffsetMinutes(this.config.ownerTimezone, now), app: 'mcp', receivedAt: now.toISOString(), audioFile: null, audioBytes: 0,
     }
     await this.store.saveTextNote(meta, text)
+    // A title the assistant gave is the assistant's, so the user can still name the note themselves later.
+    if (cleanTitle(title)) await this.store.writeEdits(meta.id, { assistantTitle: cleanTitle(title), updatedAt: now.toISOString() })
     await this.fileNote(meta.id)
     this.onNewWork()
     return meta.id

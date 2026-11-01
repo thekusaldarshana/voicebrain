@@ -49,7 +49,7 @@ The stack is isolated on purpose: its own compose project, network and volumes, 
 
 Check `https://brain.example.com/health`.
 
-Pair the phone: `docker compose exec voicebrain node src/main.ts pair --app https://<your-vercel-app> --endpoint https://brain.example.com --name "Pixel"` prints a link (the token comes from the container's environment). Open it on the phone and the recorder configures itself. In the app, **Settings → Test connection** should say it is connected.
+Connect the phone (or a computer): open the app, tap **Connect to voicebrain**. The app asks the server for a code, opens the server's approval page by itself, and waits. Type the owner passphrase there once and tap Approve; the app connects on its own and keeps its own revocable token. Nothing is copied, pasted or sent in a link. It needs `OWNER_PASSPHRASE` and `PUBLIC_URL` to be set. For a server without them, or for scripts, the older way still works: `docker compose exec voicebrain node src/main.ts pair --app https://<your-app> --endpoint https://brain.example.com` prints a link that carries the upload token.
 
 Transcription runs on the VPS itself (the `stt` container, faster-whisper), so audio never leaves it and there is no per-minute cost. Gemini (or any model server) is used only for the document work: turning transcripts into tasks, ideas and summaries.
 
@@ -62,6 +62,10 @@ Transcription runs on the VPS itself (the `stt` container, faster-whisper), so a
 
 Other clients (Claude Desktop, Cursor) can use the same `/mcp` URL with `MCP_TOKEN` as a bearer token.
 
+**After updating the server, refresh the app in ChatGPT's settings** so it picks up changed tools and descriptions.
+
+**About permission prompts.** According to OpenAI's documentation, ChatGPT asks you to confirm *write* actions by default, honors a tool's `readOnlyHint`, and treats any tool without that hint as a write. A remembered choice lasts for one conversation only. Every voicebrain tool now declares all of its hints, truthfully: the seven that only read are marked read-only and should never prompt; `add_note`, `update_task`, `rename_note` and `write_wiki` change data, so ChatGPT will ask before using them. That confirmation belongs to ChatGPT and cannot be turned off from the server. It is also what protects your notes from a note that contains hostile instructions, so the tools are deliberately **not** mislabeled as read-only to avoid it. If a read tool still prompts, that is worth reporting along with the exact wording.
+
 ## The tools
 
 | Tool | What it does |
@@ -69,13 +73,46 @@ Other clients (Claude Desktop, Cursor) can use the same `/mcp` URL with `MCP_TOK
 | `brief(topic)` | **Call first.** What you said about this, related open tasks, people and projects on record, wiki pages. Empty topic: what is overdue and recent |
 | `search(query)` | Full-text search over notes and wiki |
 | `recent(days)` | Latest notes with summaries |
-| `get_note(id)` | The full note: tasks with their source quotes, marked moments, transcript |
-| `open_loops(project?)` | Tasks not done yet, soonest due first |
-| `update_task(task_id, status)` | Mark done, dismissed or open |
+| `get_note(note)` | The full note: tasks with their source quotes, marked moments, transcript. Say which note by title |
+| `open_loops(project?)` | Tasks not done yet, soonest due first. With no project it lists every task |
+| `update_task(task, status)` | Mark done, dismissed or open; say which task in your words ("call the bank") |
+| `rename_note(note, title)` | Give a vague note a clear title. Never overrides a title you chose yourself |
 | `add_note(text)` | Save something you told the assistant to remember |
 | `list_wiki`, `read_wiki`, `write_wiki` | The assistant's own pages (weekly reviews, project and person summaries). Only `wiki/` is writable |
 
+**Notes are named for people.** Tools show titles and friendly dates ("“Interview Preparation Plan”, Fri 30 Oct, 09:12"); the short reference code is there only so tools can be called precisely, and the server tells ChatGPT never to show it. Every tool also accepts a title, or part of one, and asks which note you mean if two match. A note's name is, in order: the title you typed, a title the assistant gave it, the title the language model wrote.
+
 Ask ChatGPT "run my weekly review" and it can read the week's notes and write `wiki/review.md`, using your subscription for the heavy thinking.
+
+## What the recorder app calls
+
+| | |
+|---|---|
+| `POST /v1/pair/start`, `POST /v1/pair/poll` | Adding a device. No token yet; approval needs the owner passphrase on `GET /pair` |
+| `POST /v1/notes` | Upload a recording |
+| `PATCH /v1/notes/:id` | Rename or re-tag an uploaded note. The user's title wins over the model's |
+| `DELETE /v1/notes/:id` | Delete for good: audio, transcript, digest, vault page, search entries, tasks |
+| `GET /v1/me`, `GET /v1/devices`, `DELETE /v1/devices/:id` | Who this device is; connected devices; disconnect one (a device can disconnect only itself) |
+| `GET /v1/ping`, `GET /v1/status` | Check the connection; what the pipeline is doing |
+
+Each device gets its own token (`vbd_…`, stored on the server only as a hash). The original `INGEST_TOKEN` still works and counts as the owner's. Device tokens can upload, rename and delete notes; they cannot read note content and cannot open the assistant endpoint.
+
+**What "delete" removes.** The note and everything derived from it, on the server. Not removed: copies the assistant wrote into `wiki/` (it may have quoted the note), anything already sent to the language model or ChatGPT, and any backup you made. Generated vault pages are kept out of git so that deleting a note leaves no copy in the version history; only `wiki/` and `state/` are versioned.
+
+## Who can read your notes
+
+"Private" depends on who runs the machine, so exactly:
+
+- **On a server your team can log in to, the team can read everything.** An administrator, or anyone in the `docker` group (which is root-equivalent), can open every recording and transcript. Nothing in this software prevents that, because the server has to read your audio to transcribe it and your transcripts to answer ChatGPT. The tokens, the passphrase and HTTPS protect against outsiders, not against whoever administers the server.
+- **Third parties see text.** Transcripts go to the language model you configure (Gemini, for now) and, when ChatGPT reads your notes, to OpenAI. Audio stays on the server.
+
+If a person needs their notes to be reachable by nobody else, in order of strength:
+
+1. **Their own host.** Run that person's voicebrain on a machine only they administer: their own small VPS, a home server, or an account the team has no access to. This is the only option that truly answers the question, and one-tap connecting makes pointing the app at it easy.
+2. **Originals in their own Google Drive** (not built). The app would send the original audio to their Drive (the `drive.file` scope, which only sees files the app creates) as well as for transcription, and the server would drop the audio after transcribing. Administrators could still read the transcripts.
+3. **Encryption at rest with a key only they hold** (not built). It protects disks, backups and casual browsing, but not an administrator who is willing to read the running server's memory.
+
+The sensible combination is 1 plus an encrypted copy of the originals in their Drive as a backup. Until then, treat a shared server as suitable for test data.
 
 ## Local Whisper
 

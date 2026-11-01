@@ -1,7 +1,8 @@
 import { mkdirSync } from 'node:fs'
 import { dirname } from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
-import type { Digest, NoteMeta, Transcript, TaskStatus } from './types.ts'
+import { displayTags, displayTitle } from './titles.ts'
+import type { Digest, NoteEdits, NoteMeta, Transcript, TaskStatus } from './types.ts'
 import { localParts, slugify } from './util.ts'
 
 const SCHEMA_VERSION = 1
@@ -51,10 +52,10 @@ export class Index {
     return this.all<{ kind: string; slug: string; name: string }>('SELECT DISTINCT kind, slug, name FROM entities WHERE note_id = ?', noteId)
   }
 
-  upsertNote(meta: NoteMeta, transcript: Transcript, digest: Digest | null, vaultPath: string): void {
+  upsertNote(meta: NoteMeta, transcript: Transcript, digest: Digest | null, vaultPath: string, edits: NoteEdits | null = null): void {
     const when = localParts(meta.createdAt, meta.utcOffsetMinutes)
-    const title = digest?.title || meta.title || 'Voice note'
-    const tags = [...new Set([...meta.tags, ...(digest?.tags ?? [])])]
+    const title = displayTitle(meta, digest, edits)
+    const tags = displayTags(meta, digest, edits)
     this.db.exec('BEGIN')
     try {
       this.run('INSERT OR REPLACE INTO notes VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)', meta.id, meta.createdAt, when.date, when.time, title, digest?.summary ?? '', JSON.stringify(tags), meta.source, meta.durationMs, meta.device, vaultPath, digest ? 1 : 0, transcript.suspectedSilence ? 1 : 0)
@@ -79,6 +80,25 @@ export class Index {
   removeNote(id: string) {
     for (const sql of ['DELETE FROM notes WHERE id = ?', 'DELETE FROM tasks WHERE note_id = ?', 'DELETE FROM entities WHERE note_id = ?']) this.run(sql, id)
     this.run('DELETE FROM docs WHERE kind = ? AND ref = ?', 'note', id)
+    this.run('DELETE FROM task_status WHERE id LIKE ?', `${id}#%`)
+  }
+
+  /** Notes whose title matches `text`: exact matches if there are any, otherwise titles that contain it. Newest first. */
+  byTitle(text: string, limit = 6): NoteRow[] {
+    const exact = this.all<NoteRow>('SELECT * FROM notes WHERE lower(title) = lower(?) ORDER BY recorded_at DESC LIMIT ?', text, limit)
+    if (exact.length) return exact
+    const like = `%${text.replace(/[\\%_]/g, ch => `\\${ch}`)}%`
+    return this.all<NoteRow>("SELECT * FROM notes WHERE title LIKE ? ESCAPE '\\' ORDER BY recorded_at DESC LIMIT ?", like, limit)
+  }
+
+  /** Tasks whose text matches `text`, any status, open ones first. */
+  findTasks(text: string, limit = 8): TaskRow[] {
+    const like = `%${text.replace(/[\\%_]/g, ch => `\\${ch}`)}%`
+    return this.all<TaskRow>(
+      `SELECT t.*, COALESCE(s.status, 'open') AS status, n.title AS note_title, n.day AS day
+         FROM tasks t LEFT JOIN task_status s ON s.id = t.id JOIN notes n ON n.id = t.note_id
+        WHERE lower(t.text) = lower(?) OR t.text LIKE ? ESCAPE '\\'
+        ORDER BY (COALESCE(s.status, 'open') = 'open') DESC, lower(t.text) = lower(?) DESC, t.recorded_at DESC LIMIT ?`, text, like, text, limit)
   }
 
   upsertWiki(path: string, title: string, body: string, updatedAt: string) {

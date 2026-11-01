@@ -55,6 +55,17 @@ export interface Digest {
   createdAt: string
 }
 
+/** Changes made after the note arrived. meta.json never changes; this file holds the later edits. */
+export interface NoteEdits {
+  /** The title the user chose. An empty string means the user cleared it on purpose. */
+  userTitle?: string
+  /** A title the assistant chose. Used only when the user has not named the note. */
+  assistantTitle?: string
+  /** The user's own tags; replaces the tags sent with the upload. */
+  tags?: string[]
+  updatedAt: string
+}
+
 /** Operational state only (retries). Never the source of truth for content. */
 export interface NoteState {
   attempts: number

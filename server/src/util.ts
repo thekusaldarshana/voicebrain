@@ -6,6 +6,9 @@ export const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{1
 
 export class PermanentError extends Error {}
 
+/** The note was deleted while it was being worked on. Callers drop their work quietly. */
+export class NoteGone extends Error {}
+
 export async function writeFileAtomic(path: string, data: string | Uint8Array): Promise<void> {
   await mkdir(dirname(path), { recursive: true })
   const temporary = `${path}.${randomBytes(4).toString('hex')}.tmp`

@@ -24,7 +24,7 @@ beforeEach(async () => { dir = await tempDir(); stt = await fakeStt(); llm = awa
 afterEach(async () => { await server?.stop(); server = null; await stt.close(); await llm.close(); await dir.clean() })
 
 describe('from upload to a searchable, versioned note', () => {
-  it('transcribes, digests, files, indexes and commits', async () => {
+  it('transcribes, digests, files and indexes, and keeps generated pages out of git', async () => {
     server = await run(withProviders())
     expect((await upload(server.base)).status).toBe(201)
     await settled(undefined, 'the note to be digested and filed')
@@ -49,10 +49,15 @@ describe('from upload to a searchable, versioned note', () => {
     expect(brain.search('bank')[0]?.ref).toBe(NOTE_ID)
     expect(brain.search('weekly review')[0]?.ref).toBe(NOTE_ID)
 
-    const log = (await exec('git', ['log', '--format=%s'], { cwd: join(dir.dir, 'vault') })).stdout
-    expect(log).toContain('2026-10-30 09:12 Bank call and weekly review idea')
-    const status = (await exec('git', ['status', '--porcelain'], { cwd: join(dir.dir, 'vault') })).stdout
-    expect(status).toBe('')
+    // Git versions what is written by hand or by the assistant. Generated pages are rebuilt from the inbox, and
+    // keeping them out of history is what makes deleting a note really delete its text.
+    const tracked = (await exec('git', ['ls-files'], { cwd: join(dir.dir, 'vault') })).stdout.split('\n')
+    expect(tracked).toEqual(expect.arrayContaining(['.gitignore', 'schema/AGENTS.md', 'wiki/index.md']))
+    expect(tracked.some(file => /^(notes|daily|projects|people)\//.test(file) || file === 'tasks.md')).toBe(false)
+    const history = (await exec('git', ['log', '-p', '--all'], { cwd: join(dir.dir, 'vault') })).stdout
+    expect(history).not.toContain('Bank call')
+    expect(history).not.toContain('call the bank')
+    expect((await exec('git', ['status', '--porcelain'], { cwd: join(dir.dir, 'vault') })).stdout).toBe('')
 
     expect(stt.requests[0]?.fields).toMatchObject({ model: 'whisper-test', language: 'en', response_format: 'verbose_json' })
     expect(llm.requests).toHaveLength(1)
@@ -185,7 +190,8 @@ describe('the index is disposable, the files are not', () => {
     expect(server.app.brain.openLoops()).toEqual([])
     expect(JSON.parse(await read('vault/state/task-status.json'))[`${NOTE_ID}#0`].status).toBe('done')
     const log = (await exec('git', ['log', '--format=%s'], { cwd: join(dir.dir, 'vault') })).stdout
-    expect(log).toContain('task done: Call the bank')
+    expect(log).toContain('task done')
+    expect(log).not.toContain('Call the bank') // the text of a task never goes into commit messages
   })
 })
 
