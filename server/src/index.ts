@@ -124,6 +124,12 @@ export class Index {
       .map(row => ({ id: row.id, title: row.title, userTitle: row.user_title ?? '' }))
   }
 
+  /** Notes that are written down but not sorted into tasks and ideas yet. A silent recording needs nothing, so it is left out. */
+  waitingNotes(limit: number): NoteRow[] {
+    return this.all<NoteRow>('SELECT * FROM notes WHERE digested = 0 AND suspected_silence = 0 ORDER BY recorded_at ASC LIMIT ?', limit)
+  }
+  waitingCount(): number { return (this.get<{ n: number }>('SELECT count(*) AS n FROM notes WHERE digested = 0 AND suspected_silence = 0') ?? { n: 0 }).n }
+
   noteCount(): number { return (this.get<{ n: number }>('SELECT count(*) AS n FROM notes') ?? { n: 0 }).n }
 
   /** Ranked search over notes and wiki pages. Every word must match (prefix match); if nothing does, any word may. */

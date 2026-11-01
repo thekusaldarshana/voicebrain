@@ -138,7 +138,8 @@ describe('when things go wrong', () => {
     expect(existsSync(join(dir.dir, 'inbox', NOTE_ID, 'transcript.json'))).toBe(false)
     const status = await server.app.pipeline.status()
     expect(status.waiting).toBe(1)
-    expect(status.needs.join(' ')).toMatch(/STT_BASE_URL.*LLM_BASE_URL/s)
+    expect(status.needs.join(' ')).toMatch(/STT_BASE_URL/)
+    expect(status.needs.join(' ')).not.toMatch(/LLM_BASE_URL/) // no model on the server is needed: the assistant sorts the notes
     await server.stop()
     server = await run(withProviders())
     await settled(undefined, 'processing after configuration')

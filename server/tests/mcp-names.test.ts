@@ -115,8 +115,8 @@ describe('the assistant naming notes', () => {
 describe('what ChatGPT is told', () => {
   it('has every hint set, and only marks a tool read-only when it changes nothing', async () => {
     const tools = (await client.listTools()).tools
-    expect(tools.map(tool => tool.name).sort()).toEqual(['add_note', 'brief', 'get_note', 'list_wiki', 'open_loops', 'read_wiki', 'recent', 'rename_note', 'search', 'update_task', 'write_wiki'])
-    const readOnly = new Set(['brief', 'search', 'recent', 'get_note', 'open_loops', 'list_wiki', 'read_wiki'])
+    expect(tools.map(tool => tool.name).sort()).toEqual(['add_note', 'brief', 'get_note', 'list_wiki', 'notes_to_process', 'open_loops', 'read_wiki', 'recent', 'rename_note', 'save_digest', 'search', 'update_task', 'write_wiki'])
+    const readOnly = new Set(['brief', 'search', 'recent', 'get_note', 'open_loops', 'list_wiki', 'read_wiki', 'notes_to_process'])
     for (const tool of tools) {
       const hints = tool.annotations
       for (const key of ['readOnlyHint', 'destructiveHint', 'openWorldHint'] as const) expect(typeof hints?.[key], `${tool.name}.${key}`).toBe('boolean')

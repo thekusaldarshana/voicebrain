@@ -20,8 +20,10 @@ describe('the instruction pasted into ChatGPT', () => {
   const tools = [...readFileSync(new URL('../server/src/mcp.ts', import.meta.url), 'utf8').matchAll(/registerTool\('([a-z_]+)'/g)].map(match => match[1])
 
   it('only names tools the server really has', () => {
-    const named = [...CUSTOM_INSTRUCTION.matchAll(/\b(brief|search|recent|open_loops|get_note|update_task|rename_note|add_note|list_wiki|read_wiki|write_wiki)\b/g)].map(match => match[1])
+    const named = [...CUSTOM_INSTRUCTION.matchAll(/\b(brief|search|recent|open_loops|get_note|update_task|rename_note|add_note|list_wiki|read_wiki|write_wiki|notes_to_process|save_digest)\b/g)].map(match => match[1])
     expect(named.length).toBeGreaterThan(3)
+    expect(named).toContain('notes_to_process') // ChatGPT sorts the notes: there is no other AI on the server
+    expect(named).toContain('save_digest')
     for (const name of named) expect(tools, name).toContain(name)
   })
 

@@ -24,7 +24,7 @@ export function GuidePage() {
     <div className="shell narrow">
       <p className="eyebrow">Help</p>
       <h1>User guide</h1>
-      <p className="lede">voicebrain keeps your voice notes. You record, it writes them down and picks out tasks and ideas, your notes are kept in your own Google Drive, and ChatGPT can answer questions about them.</p>
+      <p className="lede">voicebrain keeps your voice notes. You record, it writes them down word for word, your notes are kept in your own Google Drive, and ChatGPT sorts them into tasks and ideas and answers questions about them.</p>
       <nav className="guide-contents" aria-label="Guide contents">
         <a href="#guide-signin">Sign in</a><a href="#guide-record">Record</a><a href="#guide-library">Your notes</a><a href="#guide-drive">Google Drive</a><a href="#guide-chatgpt">ChatGPT</a><a href="#guide-ask">Ask</a><a href="#guide-install">Install</a><a href="#guide-privacy">Privacy</a><a href="#guide-help">If something is wrong</a>
       </nav>
@@ -87,6 +87,7 @@ export function GuidePage() {
         <h2 id="g6">6. Ask ChatGPT</h2>
         <p>Once connected, just talk to ChatGPT about your notes. Try:</p>
         <ul>{questions.map(question => <li key={question}>“{question}”</li>)}</ul>
+        <p><strong>How notes get sorted.</strong> A minute after you record, your note is written down and can be found by its words. Its title, tasks and ideas are filled in by ChatGPT, the next time you open it with voicebrain connected. With the standing instruction from this step installed, it notices new notes by itself and sorts them; without it, ask. There is no other AI service in voicebrain. Until ChatGPT has done that, a note is called “Voice note” and has no tasks. To do it right away, say: “Sort my new voicebrain notes.”</p>
         <p>Asking is always allowed. When ChatGPT wants to <strong>change</strong> something (rename a note, mark a task done), it asks you first. That is ChatGPT’s own safety step and it cannot be switched off from here. Names it gives your notes show up in this app within about half a minute.</p>
       </section>
 
@@ -100,7 +101,7 @@ export function GuidePage() {
         <ul>
           <li>The recordings and transcripts are stored in <strong>your</strong> Google Drive.</li>
           <li>The voicebrain server reads them while it works (to transcribe and sort them). Whoever runs that server can, in principle, read them while it does. If that matters to you, run your own server.</li>
-          <li>To pick out tasks and ideas, the written text is sent to an AI model. When you ask ChatGPT, the notes it reads are sent to OpenAI.</li>
+          <li>Your recordings are turned into words by a program running on the voicebrain server, and the audio goes nowhere else. No other AI service is used. When ChatGPT reads or sorts your notes, that text goes to OpenAI.</li>
           <li>You can delete any note for good, and disconnect Drive or sign out at any time.</li>
         </ul>
       </section>
@@ -112,6 +113,7 @@ export function GuidePage() {
           <dt>Notes show “Waiting”.</dt><dd>They are saved on your phone and upload when you are online and signed in. Open Settings to check you are signed in.</dd>
           <dt>“Google Drive is not connected.”</dt><dd>Open Settings and tap Connect Google Drive. This also happens if you removed voicebrain’s access in your Google account.</dd>
           <dt>ChatGPT cannot see my notes.</dt><dd>Check voicebrain is listed under Installed on ChatGPT’s Plugins page, and that you signed in with the same Google account as here. Try asking “Using voicebrain, …”.</dd>
+          <dt>My note is called “Voice note” and has no tasks.</dt><dd>It is written down but ChatGPT has not sorted it yet. Open ChatGPT with voicebrain connected and say “Sort my new voicebrain notes.” ChatGPT may ask you to allow saving; that is its own safety step.</dd>
           <dt>ChatGPT only uses voicebrain when I ask it to.</dt><dd>Add the custom instruction from step 5 (Personalization → Custom instructions). Until then you can always say “Using voicebrain, …”.</dd>
           <dt>ChatGPT does not know about a new feature.</dt><dd>Open the Plugins page and press the refresh button next to Add.</dd>
           <dt>The app looks old.</dt><dd>Close it completely and open it again. It updates itself in the background.</dd>

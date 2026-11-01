@@ -24,7 +24,7 @@ export interface Config {
   allowedOrigin: string
   /** IANA zone used for "today" and for notes written in chat. Example: Asia/Colombo */
   ownerTimezone: string
-  stt: (ProviderConfig & { provider: 'openai' | 'gemini'; language: string; maxMb: number; prompt: string }) | null
+  stt: (ProviderConfig & { provider: 'openai'; language: string; maxMb: number; prompt: string }) | null
   llm: (ProviderConfig & { maxInputChars: number }) | null
   workerEnabled: boolean
   workerIntervalMs: number
@@ -62,8 +62,10 @@ export function loadConfig(env: Record<string, string | undefined> = process.env
   if (driveEnabled && !tokenEncryptionKey) throw new Error('DRIVE_ENABLED=1 needs TOKEN_ENCRYPTION_KEY (openssl rand -base64 32). Drive refresh tokens are never stored unencrypted.')
   if (driveEnabled && authMode({ googleClientId, googleClientSecret, ownerPassphrase }) !== 'google') throw new Error('DRIVE_ENABLED=1 needs Google sign-in (GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET and PUBLIC_URL).')
 
-  const sttProvider = text(env.STT_PROVIDER) === 'gemini' || text(env.STT_BASE_URL).includes('generativelanguage.googleapis.com') ? 'gemini' : 'openai'
-  const sttBase = trimSlash(text(env.STT_BASE_URL) || (sttProvider === 'gemini' && env.STT_PROVIDER ? 'https://generativelanguage.googleapis.com/v1beta' : ''))
+  // Speech to text is a Whisper server (OpenAI-compatible). Sending audio to a third party is not supported.
+  if (text(env.STT_PROVIDER) && text(env.STT_PROVIDER) !== 'openai') throw new Error('STT_PROVIDER is no longer used: transcription is a Whisper server (STT_BASE_URL). Remove STT_PROVIDER.')
+  if (text(env.STT_BASE_URL).includes('generativelanguage.googleapis.com')) throw new Error('Gemini transcription was removed. Point STT_BASE_URL at your Whisper server.')
+  const sttBase = trimSlash(text(env.STT_BASE_URL))
   const llmBase = trimSlash(text(env.LLM_BASE_URL))
   return {
     port: Number(env.PORT ?? 8787),
@@ -80,7 +82,7 @@ export function loadConfig(env: Record<string, string | undefined> = process.env
     tokenEncryptionKey,
     allowedOrigin: text(env.ALLOWED_ORIGIN, '*'),
     ownerTimezone: text(env.OWNER_TIMEZONE, 'UTC'),
-    stt: sttBase ? { provider: sttProvider, baseUrl: sttBase, apiKey: text(env.STT_API_KEY), model: text(env.STT_MODEL, sttProvider === 'gemini' ? 'gemini-3.5-transcribe' : 'whisper-1'), language: text(env.STT_LANGUAGE, 'en'), maxMb: Number(env.STT_MAX_MB ?? (sttProvider === 'gemini' ? 14 : 24)), prompt: text(env.STT_PROMPT) } : null,
+    stt: sttBase ? { provider: 'openai', baseUrl: sttBase, apiKey: text(env.STT_API_KEY), model: text(env.STT_MODEL, 'whisper-1'), language: text(env.STT_LANGUAGE, 'en'), maxMb: Number(env.STT_MAX_MB ?? 24), prompt: text(env.STT_PROMPT) } : null,
     llm: llmBase ? { baseUrl: llmBase, apiKey: text(env.LLM_API_KEY), model: text(env.LLM_MODEL), maxInputChars: Number(env.LLM_MAX_INPUT_CHARS ?? 20_000) } : null,
     workerEnabled: env.WORKER !== '0',
     workerIntervalMs: Number(env.WORKER_INTERVAL_MS ?? 5000),

@@ -110,7 +110,7 @@ describe('signing in with the owner passphrase', () => {
     expect(tokens).toMatchObject({ token_type: 'Bearer', expires_in: 3600 })
     const client = await connect(tokens.access_token)
     const tools = (await client.listTools()).tools.map(tool => tool.name).sort()
-    expect(tools).toEqual(['add_note', 'brief', 'get_note', 'list_wiki', 'open_loops', 'read_wiki', 'recent', 'rename_note', 'search', 'update_task', 'write_wiki'])
+    expect(tools).toEqual(['add_note', 'brief', 'get_note', 'list_wiki', 'notes_to_process', 'open_loops', 'read_wiki', 'recent', 'rename_note', 'save_digest', 'search', 'update_task', 'write_wiki'])
     await client.close()
   })
 
@@ -168,7 +168,7 @@ describe('signing in with the owner passphrase', () => {
     expect(next.access_token).not.toBe(tokens.access_token)
     expect((await exchange({ grant_type: 'refresh_token', refresh_token: tokens.refresh_token, client_id: client })).status).toBe(400)
     const connected = await connect(next.access_token)
-    expect((await connected.listTools()).tools.length).toBe(11)
+    expect((await connected.listTools()).tools.length).toBe(13)
     await connected.close()
   })
 
@@ -178,7 +178,7 @@ describe('signing in with the owner passphrase', () => {
     await server.stop()
     server = await run(config)
     const client = await connect(tokens.access_token)
-    expect((await client.listTools()).tools.length).toBe(11)
+    expect((await client.listTools()).tools.length).toBe(13)
     await client.close()
   })
 
@@ -191,7 +191,7 @@ describe('signing in with the owner passphrase', () => {
 
   it('also accepts the static token for tools that cannot do OAuth', async () => {
     const client = await connect(MCP_TOKEN)
-    expect((await client.listTools()).tools.length).toBe(11)
+    expect((await client.listTools()).tools.length).toBe(13)
     await client.close()
   })
 

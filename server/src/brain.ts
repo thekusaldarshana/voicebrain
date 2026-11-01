@@ -1,15 +1,16 @@
 import { randomUUID } from 'node:crypto'
 import { stat } from 'node:fs/promises'
 import { loadStorageConfig, type Config } from './config.ts'
+import { cleanDigest } from './digest.ts'
 import type { Hit, NoteRow, TaskRow } from './index.ts'
 import { Index } from './index.ts'
 import { createStorage } from './storage-factory.ts'
 import type { NoteStorage } from './storage.ts'
 import { Store } from './store.ts'
 import { cleanTags, cleanTitle, userNamed } from './titles.ts'
-import type { NoteEdits, NoteMeta, TaskStatus, TaskStatusEntry } from './types.ts'
+import type { Digest, NoteEdits, NoteMeta, TaskStatus, TaskStatusEntry } from './types.ts'
 import { Vault, entityPath, notePath, renderDaily, renderEntity, renderNote, renderTasks } from './vault.ts'
-import { PermanentError, UUID, localParts, readJson, writeJson } from './util.ts'
+import { NoteGone, PermanentError, UUID, localParts, readJson, writeJson } from './util.ts'
 import { join } from 'node:path'
 
 const STATUS_FILE = 'state/task-status.json'
@@ -341,6 +342,41 @@ export class Brain {
     await this.fileNote(meta.id)
     this.onNewWork()
     return meta.id
+  }
+
+  // ---- sorting notes: the assistant reads what was said and says what it found ----
+
+  waitingCount(): number { return this.index.waitingCount() }
+
+  /** The oldest notes that are written down but not sorted yet, with their words. A long recording is shown in part. */
+  async notesToProcess(limit = 3, maxChars = 30_000): Promise<Array<{ row: NoteRow; text: string; shown: number; total: number }>> {
+    const out: Array<{ row: NoteRow; text: string; shown: number; total: number }> = []
+    for (const row of this.index.waitingNotes(Math.max(1, Math.min(limit, 5)))) {
+      const transcript = await this.store.transcript(row.id)
+      if (transcript) out.push({ row, text: transcript.text.slice(0, maxChars), shown: Math.min(maxChars, transcript.text.length), total: transcript.text.length })
+    }
+    return out
+  }
+
+  /**
+   * Stores what the assistant found in a note. Every task, idea, decision and question must come with words copied from
+   * what the speaker said; anything that cannot be matched to the transcript is dropped and counted, exactly as when a
+   * model on the server did this. It only works once per note, so the assistant cannot overwrite an earlier result.
+   */
+  async saveAssistantDigest(id: string, raw: unknown): Promise<{ digest: Digest } | { error: string }> {
+    if (!(await this.store.has(id))) return { error: 'No such note.' }
+    const [meta, transcript, existing] = await Promise.all([this.store.meta(id), this.store.transcript(id), this.store.digest(id)])
+    if (!meta || !transcript) return { error: 'This note has not been written down yet. Try again in a minute.' }
+    if (existing) return { error: 'This note has already been sorted, so nothing was changed.' }
+    const cleaned = cleanDigest(raw, transcript.text)
+    const digest: Digest = { ...cleaned, title: cleaned.title || meta.title || 'Voice note', model: 'chatgpt', createdAt: this.now().toISOString() }
+    try { await this.store.writeDigest(id, digest) } catch (error) {
+      if (error instanceof NoteGone) return { error: 'That note was deleted.' }
+      throw error
+    }
+    await this.fileNote(id)
+    await this.store.releaseAudio(id).catch(() => undefined) // sorted now: the storage may drop its local copy of the audio
+    return { digest }
   }
 
   wikiList(): string[] { return this.index.wikiPaths() }

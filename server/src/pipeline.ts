@@ -9,6 +9,8 @@ export interface PipelineOptions { fetch?: Fetch; retryDelay?: (attempts: number
 export interface PipelineStatus {
   notes: number
   waiting: number
+  /** Written down and searchable, but not yet sorted into tasks and ideas by the assistant. */
+  awaitingAssistant: number
   failed: Array<{ id: string; stage: string | null; error: string | null }>
   needs: string[]
 }
@@ -73,12 +75,11 @@ export class Pipeline {
     for (const id of ids) {
       const state = await store.state(id)
       if (state.failed) failed.push({ id, stage: state.stage, error: state.lastError })
-      else if (!(await store.digest(id)) || !index.note(id)) waiting += 1
+      else if (!index.note(id) || (config.llm && !(await store.digest(id)))) waiting += 1
     }
     const needs: string[] = []
     if (!config.stt) needs.push('STT_BASE_URL (voice notes cannot be transcribed yet)')
-    if (!config.llm) needs.push('LLM_BASE_URL and LLM_MODEL (notes are saved but tasks are not extracted yet)')
-    return { notes: ids.length, waiting, failed, needs }
+    return { notes: ids.length, waiting, awaitingAssistant: index.waitingCount(), failed, needs }
   }
 
   private async pass(): Promise<void> {
@@ -115,17 +116,21 @@ export class Pipeline {
       }
       let digest = await store.digest(id)
       if (!digest) {
-        if (!config.llm) return
+        // Sorting a note into tasks and ideas is the assistant's job (ChatGPT, through the MCP tools). With no model
+        // configured here a note simply stays filed and searchable until it does. Silence needs no sorting.
         stage = 'digest'
-        digest = transcript.suspectedSilence ? silentDigest(meta.title) : await digestNote(config.llm, meta, transcript, index.knownEntities(), this.fetch)
-        await store.writeDigest(id, digest)
-        worked = true
-        this.log(`digested ${id.slice(0, 8)}: ${digest.tasks.length} task(s)`)
+        if (transcript.suspectedSilence) digest = silentDigest(meta.title)
+        else if (config.llm) digest = await digestNote(config.llm, meta, transcript, index.knownEntities(), this.fetch)
+        if (digest) {
+          await store.writeDigest(id, digest)
+          worked = true
+          this.log(`digested ${id.slice(0, 8)}: ${digest.tasks.length} task(s)`)
+        }
       }
       stage = 'file'
       const row = index.note(id)
       if (!row || (digest && !row.digested)) await this.brain.fileNote(id)
-      if (worked) await this.releaseAudio(id) // transcribed and digested: the storage may now drop its local copy of the audio
+      if (worked && digest) await this.releaseAudio(id) // transcribed and digested: the storage may now drop its local copy of the audio. Held until then, so the way back to the audio stays open.
       if (state.attempts || state.lastError) await store.writeState(id, { attempts: 0, nextAttemptAt: null, lastError: null, failed: false, stage: null })
     } catch (error) {
       if (error instanceof NoteGone || !(await store.has(id))) return // deleted while we were working on it

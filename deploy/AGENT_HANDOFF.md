@@ -7,7 +7,7 @@ Things you must decide or provide first:
 - how the VPS may **read the GitHub repo** if it is private (a read-only deploy key or a token you create yourself; the agent must not create credentials on its own)
 - your **Vercel app URL** (Phase 3)
 - a **passphrase** you choose (12+ characters) for approving ChatGPT's access (Phase 2). You type it into `.env` yourself.
-- an **LLM API key** for the document step (Gemini for now). You put it into `.env` yourself.
+- no language-model API key: ChatGPT sorts the notes through the MCP tools.
 
 ---
 
@@ -27,7 +27,7 @@ THE MACHINE (from a read-only report taken 2026-11-01)
 - The server can reach Docker Hub, Hugging Face and PyPI.
 
 THE PROJECT
-Repo https://github.com/thekusaldarshana/voicebrain, branch main. Read README.md, server/README.md, compose.yaml and .env.example first. In short: recorder app -> upload -> Whisper (the stt container, model large-v3-turbo) -> a language model turns the transcript into tasks and a summary (Gemini for now, through its OpenAI-compatible endpoint) -> a markdown vault in git -> an MCP endpoint for ChatGPT. Everything runs from compose.yaml as the compose project "voicebrain" in /home/bmc/voicebrain.
+Repo https://github.com/thekusaldarshana/voicebrain, branch main. Read README.md, server/README.md, compose.yaml and .env.example first. In short: recorder app -> upload -> Whisper (the stt container, model large-v3-turbo) -> ChatGPT turns the transcript into tasks and a summary through the MCP tools notes_to_process and save_digest (no API key on the server) -> a markdown vault in git -> an MCP endpoint for ChatGPT. Everything runs from compose.yaml as the compose project "voicebrain" in /home/bmc/voicebrain.
 
 RULES
 1. Read-only first. Before any change, say what you will change and why. Changes go only inside /home/bmc/voicebrain, plus, in Phase 2 only, one block added to the Caddyfile.
