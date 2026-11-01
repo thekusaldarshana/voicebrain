@@ -1,4 +1,12 @@
 # voicebrain on your VPS.   cp .env.example .env  →  edit  →  docker compose up -d --build
+#
+# Written for a machine that already runs other things (Caddy, Postgres, n8n, ...):
+#   - its own project name, network and volumes, so nothing it creates collides with anything else
+#   - the only host port is 127.0.0.1:${VOICEBRAIN_PORT:-18787}; the container still listens on 8787 inside
+#   - hard CPU and memory limits, so a long transcription can slow itself down but not crash its neighbours
+#     (the VPS has no swap, so a runaway process would otherwise make the kernel kill something else)
+name: voicebrain
+
 services:
   voicebrain:
     build: ./server
@@ -7,9 +15,10 @@ services:
     depends_on: [stt]
     # Run as the user that owns ./data on the host (usually 1000). Override with PUID / PGID in .env if not.
     user: "${PUID:-1000}:${PGID:-1000}"
-    # Only your reverse proxy (Caddy) can reach it. Nothing is exposed to the internet directly.
+    mem_limit: 512m
+    # Only the reverse proxy on this machine can reach it. Nothing is exposed to the internet directly.
     ports:
-      - "127.0.0.1:8787:8787"
+      - "127.0.0.1:${VOICEBRAIN_PORT:-18787}:8787"
     volumes:
       - "${DATA_PATH:-./data}:/data"
 
@@ -21,8 +30,11 @@ services:
     restart: unless-stopped
     environment:
       WHISPER_MODEL: "${WHISPER_MODEL:-large-v3-turbo}"
-      # 6 of 8 vCPUs, so Caddy and anything else on the machine stay responsive while a note is being transcribed.
+      # 6 of 8 vCPUs, so everything else on the machine stays responsive while a note is transcribed.
       WHISPER_THREADS: "${WHISPER_THREADS:-6}"
+    cpus: "6"
+    cpu_shares: 256        # under contention, the other services win
+    mem_limit: "${STT_MEM_LIMIT:-5g}"   # large-v3-turbo needs about 3 GB; raise this to 6g for large-v3
     volumes:
       - whisper-models:/models
 

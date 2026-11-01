@@ -1,8 +1,17 @@
-# Add to the Caddyfile you already run on the VPS, then: sudo systemctl reload caddy
+# Add this block to the Caddyfile you already run, then validate and reload (never restart) Caddy.
+#
+# If Caddy runs in Docker with host networking (check: docker inspect caddy --format '{{.HostConfig.NetworkMode}}'
+# prints "host"), 127.0.0.1:18787 is the right upstream. If Caddy is on a Docker network instead, 127.0.0.1 would be
+# Caddy's own container, and it needs the host's address or a shared network; see deploy/AGENT_HANDOFF.md.
+#
+#   docker exec caddy caddy validate --config /etc/caddy/Caddyfile
+#   docker exec caddy caddy reload   --config /etc/caddy/Caddyfile
+#
+# The domain's DNS A record must already point at this server, and ports 80 and 443 must reach Caddy.
 brain.example.com {
 	encode zstd gzip
 	request_body {
 		max_size 250MB
 	}
-	reverse_proxy 127.0.0.1:8787
+	reverse_proxy 127.0.0.1:18787
 }

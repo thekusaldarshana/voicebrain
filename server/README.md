@@ -28,22 +28,30 @@ ChatGPT ◀──MCP over HTTPS──── brief · search · recent · get_not
 
 ## Run it on the VPS
 
-Needs Docker and your existing Caddy.
+Needs Docker with the compose plugin. If the machine already runs other services, read `deploy/AGENT_HANDOFF.md`: it deploys in stages and checks at each one that nothing else was disturbed.
 
 ```bash
 git clone https://github.com/thekusaldarshana/voicebrain && cd voicebrain
 cp .env.example .env && nano .env          # see the comments in the file
-mkdir data && sudo chown 1000:1000 data    # the user the container runs as
+mkdir data && chown 1000:1000 data         # the user the container runs as (PUID / PGID in .env to change)
 docker compose up -d --build
-curl http://127.0.0.1:8787/health          # {"ok":true}
+curl http://127.0.0.1:18787/health         # {"ok":true}   (host port 18787; set VOICEBRAIN_PORT to change it)
+docker compose logs -f stt                 # the first start downloads the Whisper model (about 1.6 GB)
 docker compose logs -f voicebrain          # shows what is configured and what is missing
 ```
 
-Add `Caddyfile.example` to your Caddyfile with your own domain, reload Caddy, and check `https://brain.example.com/health`.
+The stack is isolated on purpose: its own compose project, network and volumes, one host port bound to `127.0.0.1`, and hard CPU and memory limits on the Whisper container (important on a machine without swap, where one runaway process makes the kernel kill something else). `docker compose down` removes it without touching anything else; add `-v` only if you also want the downloaded models gone (`./data` is never removed by compose).
 
-Pair the phone: `node server/src/main.ts pair --app https://<your-vercel-app> --endpoint https://brain.example.com --token <INGEST_TOKEN> --name "Pixel"` prints a link. Open it on the phone and the recorder configures itself. In the app, **Settings → Test connection** should say it is connected.
+**Public HTTPS.** Point a DNS A record at the server, then add the block from `Caddyfile.example` to the Caddyfile you already run and **reload** (never restart) Caddy:
 
-Transcription runs on the VPS itself (the `stt` container, faster-whisper), so audio never leaves it and there is no per-minute cost. The first start downloads the model (about 500 MB for the default) into a volume; `docker compose logs -f stt` shows it. Gemini (or any model server) is used only for the document work: turning transcripts into tasks, ideas and summaries.
+- Caddy as a system service: `sudo systemctl reload caddy`.
+- Caddy in Docker: `docker exec caddy caddy validate --config /etc/caddy/Caddyfile`, then `docker exec caddy caddy reload --config /etc/caddy/Caddyfile`. The upstream `127.0.0.1:18787` only works if that container uses host networking (`docker inspect caddy --format '{{.HostConfig.NetworkMode}}'` prints `host`); otherwise it needs a shared network or the host's address. Back up the Caddyfile first.
+
+Check `https://brain.example.com/health`.
+
+Pair the phone: `docker compose exec voicebrain node src/main.ts pair --app https://<your-vercel-app> --endpoint https://brain.example.com --name "Pixel"` prints a link (the token comes from the container's environment). Open it on the phone and the recorder configures itself. In the app, **Settings → Test connection** should say it is connected.
+
+Transcription runs on the VPS itself (the `stt` container, faster-whisper), so audio never leaves it and there is no per-minute cost. Gemini (or any model server) is used only for the document work: turning transcripts into tasks, ideas and summaries.
 
 ## Connect ChatGPT
 
