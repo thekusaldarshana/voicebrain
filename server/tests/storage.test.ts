@@ -5,6 +5,8 @@ import { describe, expect, it } from 'vitest'
 import { LocalStorage } from '../src/storage-local.ts'
 import { OWNER_ID } from '../src/storage.ts'
 import { NoteGone } from '../src/util.ts'
+import { DriveStorage } from '../src/storage-drive.ts'
+import { FakeDrive, FakeTokens } from './fake-drive.ts'
 import { MemoryStorage } from './memory-storage.ts'
 import { storageContract } from './storage-contract.ts'
 import { tempDir } from './helpers.ts'
@@ -20,6 +22,16 @@ storageContract('LocalStorage', {
 storageContract('MemoryStorage (the test fake)', {
   dropsAudio: true,
   make: async options => ({ storage: new MemoryStorage(options), cleanup: async () => undefined }),
+})
+
+storageContract('DriveStorage (against a fake Drive)', {
+  dropsAudio: true,
+  make: async options => {
+    const fake = await new FakeDrive().start()
+    const dir = await tempDir()
+    const storage = new DriveStorage({ tokens: new FakeTokens(), cacheDir: dir.dir, apiBase: fake.apiBase, uploadBase: fake.uploadBase, chunkBytes: 262_144, retry: { baseMs: 1, maxMs: 5 }, ...options })
+    return { storage, cleanup: async () => { await fake.close(); await dir.clean() } }
+  },
 })
 
 const A = '3f2b1c0e-8a41-4d7e-9b52-0c6d1e2f3a4b'

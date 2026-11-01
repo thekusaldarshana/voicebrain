@@ -94,6 +94,35 @@ export function storageContract(name: string, options: ContractOptions): void {
       })
     })
 
+    describe('concurrency', () => {
+      it('lets exactly one of many simultaneous creates of the same note win, and leaves one intact note', async () => {
+        const storage = await fresh()
+        const results = await Promise.all(Array.from({ length: 8 }, (_, index) => storage.createNote(OWNER_ID, A, { meta: encode(`meta ${index}`), files: { 'audio.webm': encode(`audio ${index}`) } })))
+        expect(results.filter(Boolean)).toHaveLength(1)
+        const winner = results.indexOf(true)
+        expect(decode(await storage.get(OWNER_ID, A, 'meta.json'))).toBe(`meta ${winner}`)
+        expect(decode(await storage.get(OWNER_ID, A, 'audio.webm'))).toBe(`audio ${winner}`) // the winner's files, not a mix
+        expect(await storage.list(OWNER_ID, A)).toEqual(['audio.webm', 'meta.json'])
+        expect(await storage.listNotes(OWNER_ID)).toEqual([A])
+      })
+
+      it('creates many different notes at once without losing or duplicating any', async () => {
+        const storage = await fresh()
+        const ids = Array.from({ length: 10 }, (_, index) => `00000000-0000-4000-8000-${String(index).padStart(12, '0')}`)
+        expect(await Promise.all(ids.map(id => storage.createNote(OWNER_ID, id, { meta: meta(id), files: { 'audio.webm': encode(id) } })))).toEqual(ids.map(() => true))
+        expect(await storage.listNotes(OWNER_ID)).toEqual(ids)
+        for (const id of ids) expect(decode(await storage.get(OWNER_ID, id, 'audio.webm'))).toBe(id)
+      })
+
+      it('serializes simultaneous writes to one file: the last one wins whole', async () => {
+        const storage = await fresh()
+        await storage.createNote(OWNER_ID, A, { meta: meta(A) })
+        await Promise.all(Array.from({ length: 6 }, (_, index) => storage.put(OWNER_ID, A, 'digest.json', encode(`version ${index}`))))
+        expect(decode(await storage.get(OWNER_ID, A, 'digest.json'))).toMatch(/^version \d$/)
+        expect(await storage.list(OWNER_ID, A)).toEqual(['digest.json', 'meta.json']) // one digest.json, not six
+      })
+    })
+
     describe('files', () => {
       it('round-trips binary data exactly, and says null for what is not there', async () => {
         const storage = await fresh()
