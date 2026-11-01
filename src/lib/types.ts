@@ -22,11 +22,16 @@ export interface Note {
   source: 'record' | 'import'
   /** The audio file was removed from this device after a successful upload. */
   audioRemoved: boolean
+  /** A rename or tag change that has not reached the server yet. */
+  editPending?: boolean
 }
 
 export interface Settings {
   endpoint: string
+  /** This device's own token, handed over when the owner approved it (or one pasted in by hand). */
   token: string
+  /** The server's id for this device, used to disconnect it. Empty for a pasted token. */
+  deviceId: string
   deviceName: string
   autoUpload: boolean
   /** Days the audio stays on this device after upload. 0 removes it straight away, -1 keeps it. */
@@ -53,6 +58,7 @@ export function guessDeviceName(userAgent: string): string {
 export const DEFAULT_SETTINGS: Settings = {
   endpoint: '',
   token: '',
+  deviceId: '',
   deviceName: typeof navigator === 'undefined' ? 'This device' : guessDeviceName(navigator.userAgent),
   autoUpload: true,
   keepAfterUpload: 7,
@@ -64,4 +70,4 @@ export const DEFAULT_SETTINGS: Settings = {
   recordOnOpen: false,
 }
 
-export const APP_VERSION = '0.1.0'
+export const APP_VERSION = '0.2.0'

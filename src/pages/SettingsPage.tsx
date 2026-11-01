@@ -4,6 +4,7 @@ import { isConfigured, isPrivateAddress, normalizeEndpoint } from '../lib/endpoi
 import { formatBytes } from '../lib/format'
 import { retryFailed } from '../lib/notes'
 import { kickUploads, pingServer } from '../lib/uploader'
+import { ConnectCard } from '../components/ConnectCard'
 import type { Settings } from '../lib/types'
 
 interface InstallEvent extends Event { prompt(): Promise<void>; userChoice: Promise<{ outcome: string }> }
@@ -65,29 +66,33 @@ export function SettingsPage({ installPrompt }: { installPrompt: InstallEvent | 
 
       <section className="settings-section" aria-labelledby="connection-title">
         <h2 id="connection-title">Connection</h2>
-        <p className="hint">Where recordings are sent. You can also open a pairing link from your server and this fills in on its own.</p>
-        <label className="field">
-          <span className="field-label">Server address</span>
-          <input value={endpoint} inputMode="url" autoCapitalize="none" autoCorrect="off" spellCheck={false} placeholder="https://notes.example.com" onChange={event => { setEndpointDraft(event.target.value); setResult(null) }} />
-        </label>
-        <label className="field">
-          <span className="field-label">Access token</span>
-          <span className="input-row">
-            <input value={token} type={showToken ? 'text' : 'password'} autoComplete="off" autoCapitalize="none" spellCheck={false} onChange={event => { setTokenDraft(event.target.value); setResult(null) }} />
-            <button type="button" className="secondary-button" onClick={() => setShowToken(value => !value)} aria-pressed={showToken}>{showToken ? 'Hide' : 'Show'}</button>
-          </span>
-        </label>
-        {endpoint && !token && <p className="hint warn">No token set. Anyone who finds this address could send notes to it.</p>}
-        {endpoint && normalizeEndpoint(endpoint).startsWith('http://') && !isPrivateAddress(endpoint) && <p className="hint warn">This address is not encrypted. Use https:// for anything outside your own network.</p>}
-        <label className="field">
-          <span className="field-label">This device’s name</span>
-          <input value={settings.deviceName} maxLength={40} onChange={event => set({ deviceName: event.target.value })} />
-        </label>
-        <div className="row-actions">
-          <button type="button" className="primary-button" onClick={() => void saveConnection()} disabled={!dirty}>Save</button>
-          <button type="button" className="secondary-button" onClick={() => void test()} disabled={testing || !endpoint}>{testing ? 'Testing…' : 'Test connection'}</button>
-        </div>
-        {result && <p className={`test-result ${result.ok ? 'ok' : 'bad'}`} role="status">{result.message}</p>}
+        <ConnectCard autoStart={new URLSearchParams(window.location.hash.split('?')[1] ?? '').get('connect') === '1'} />
+        <details className="advanced">
+          <summary>Advanced: use an address and token by hand</summary>
+          <p className="hint">For a server that cannot connect devices with one tap. You can also open a pairing link from the server.</p>
+          <label className="field">
+            <span className="field-label">Server address</span>
+            <input value={endpoint} inputMode="url" autoCapitalize="none" autoCorrect="off" spellCheck={false} placeholder="https://notes.example.com" onChange={event => { setEndpointDraft(event.target.value); setResult(null) }} />
+          </label>
+          <label className="field">
+            <span className="field-label">Access token</span>
+            <span className="input-row">
+              <input value={token} type={showToken ? 'text' : 'password'} autoComplete="off" autoCapitalize="none" spellCheck={false} onChange={event => { setTokenDraft(event.target.value); setResult(null) }} />
+              <button type="button" className="secondary-button" onClick={() => setShowToken(value => !value)} aria-pressed={showToken}>{showToken ? 'Hide' : 'Show'}</button>
+            </span>
+          </label>
+          {endpoint && !token && <p className="hint warn">No token set. Anyone who finds this address could send notes to it.</p>}
+          {endpoint && normalizeEndpoint(endpoint).startsWith('http://') && !isPrivateAddress(endpoint) && <p className="hint warn">This address is not encrypted. Use https:// for anything outside your own network.</p>}
+          <label className="field">
+            <span className="field-label">This device’s name</span>
+            <input value={settings.deviceName} maxLength={40} onChange={event => set({ deviceName: event.target.value })} />
+          </label>
+          <div className="row-actions">
+            <button type="button" className="primary-button" onClick={() => void saveConnection()} disabled={!dirty}>Save</button>
+            <button type="button" className="secondary-button" onClick={() => void test()} disabled={testing || !endpoint}>{testing ? 'Testing…' : 'Test connection'}</button>
+          </div>
+          {result && <p className={`test-result ${result.ok ? 'ok' : 'bad'}`} role="status">{result.message}</p>}
+        </details>
       </section>
 
       <section className="settings-section" aria-labelledby="upload-title">
@@ -153,7 +158,7 @@ export function SettingsPage({ installPrompt }: { installPrompt: InstallEvent | 
         {window.matchMedia('(display-mode: standalone)').matches
           ? <p className="hint">Installed. Press and hold the app icon for the Record shortcut.</p>
           : installPrompt
-            ? <><p className="hint">Add Trapper Voice to your home screen to open it like an app, offline, with a one-tap Record shortcut.</p>
+            ? <><p className="hint">Add voicebrain to your home screen to open it like an app, offline, with a one-tap Record shortcut.</p>
               <div className="row-actions"><button type="button" className="primary-button" onClick={() => void installPrompt.prompt()}>Install app</button></div></>
             : <p className="hint">In your browser menu choose “Install app” or “Add to Home screen”. On iPhone use Share, then Add to Home Screen.</p>}
       </section>

@@ -1,6 +1,6 @@
 {
   "$schema": "../node_modules/@tauri-apps/cli/config.schema.json",
-  "productName": "Trapper Voice",
+  "productName": "voicebrain",
   "version": "0.1.0",
   "identifier": "com.kusaldarshana.trappervoice",
   "build": {
@@ -12,7 +12,7 @@
   "app": {
     "windows": [
       {
-        "title": "Trapper Voice",
+        "title": "voicebrain",
         "width": 460,
         "height": 860,
         "minWidth": 360,

@@ -9,7 +9,7 @@ interface VoiceDB extends DBSchema {
   kv: { key: string; value: unknown }
 }
 
-export const DB_NAME = 'trapper-voice'
+export const DB_NAME = 'trapper-voice' // an internal name, kept so notes already on a phone stay where they are
 let opened: Promise<IDBPDatabase<VoiceDB>> | null = null
 
 export function db(): Promise<IDBPDatabase<VoiceDB>> {

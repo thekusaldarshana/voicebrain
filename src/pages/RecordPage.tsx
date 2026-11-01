@@ -23,7 +23,7 @@ function Clock() {
   }, [live, snapshot.noteId])
 
   useEffect(() => {
-    const original = 'Trapper Voice'
+    const original = 'voicebrain'
     document.title = snapshot.state === 'recording' ? `● ${formatClock(ms).slice(3)} · ${original}` : snapshot.state === 'paused' ? `Paused · ${original}` : original
     return () => { document.title = original }
   }, [snapshot.state, ms])
@@ -95,7 +95,7 @@ export function RecordPage() {
   else if (snapshot.state === 'paused') message = 'Paused. Resume or stop to save.'
   else if (snapshot.state === 'stopping') message = 'Saving…'
   else if (saved) message = `Saved ${formatDuration(saved.durationMs)}. ${describeStatus(saved, settings, now, online).text}.`
-  else message = connected ? 'Tap record. After you stop, saving and uploading happen on their own.' : 'Tap record. Connect a server in Settings to upload automatically.'
+  else message = connected ? 'Tap record. After you stop, saving and uploading happen on their own.' : 'Tap record. Your notes are kept on this device until you connect.'
 
   return <main className="page record-page">
     <div className="shell record-layout">
@@ -134,6 +134,7 @@ export function RecordPage() {
           </div>
 
           <p className={`timer-message${snapshot.error || snapshot.warning ? ' is-alert' : ''}`} role="status" aria-live="polite">{message}</p>
+          {!connected && snapshot.state === 'idle' && <p className="connect-prompt"><a className="primary-button" href="#/settings?connect=1">Connect to voicebrain</a></p>}
           <p className="timer-help">Space starts and stops · M marks a moment. The screen stays on while recording.</p>
         </div>
       </section>

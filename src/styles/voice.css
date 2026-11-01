@@ -1,4 +1,4 @@
-/* Trapper Voice. Uses the shared Trapper tokens (tokens.css) and the patterns in design.md. */
+/* voicebrain. Uses the shared Trapper tokens (tokens.css) and the patterns in design.md. */
 *, *::before, *::after { box-sizing: border-box; }
 html, body, #root { min-height: 100%; margin: 0; background: var(--color-canvas); }
 body { min-width: 320px; color: var(--color-text); font-family: var(--font-ui); font-size: var(--font-size-body); line-height: var(--line-height-body); }
@@ -171,3 +171,20 @@ h2 { font-size: var(--font-size-section); line-height: 1.2; font-weight: 500; le
   .spin { animation: none; }
   .toast { animation: none; }
 }
+
+/* Connecting a device: one tap, then the owner's passphrase on the server's own page. */
+.connect { margin-top: 14px; }
+.primary-button.big { width: 100%; min-height: 54px; border-radius: 12px; font-size: 15px; }
+a.primary-button { text-decoration: none; }
+.connect-status { display: flex; align-items: flex-start; gap: 10px; margin: 0 0 4px; color: #b9d3b0; font-size: 14px; }
+.connect-status svg { flex: none; margin-top: 3px; }
+.connect-status strong { font-weight: 600; }
+.connect-code { margin: 18px 0 8px; padding: 20px 12px; border: 1px solid var(--color-surface-raised); border-radius: var(--radius-card); background: var(--color-canvas); color: var(--color-text); font-size: clamp(30px, 10vw, 46px); font-weight: 400; letter-spacing: .14em; text-align: center; font-variant-numeric: tabular-nums; }
+.link-button { padding: 0; border: 0; color: var(--color-text-secondary); background: none; font-size: 12px; text-decoration: underline; text-underline-offset: 3px; }
+.link-button:hover { color: var(--color-text); }
+.inline-input { width: min(100%, 260px); margin: 0 4px; padding: 6px 8px; border: 1px solid #3a3a3a; border-radius: 8px; color: var(--color-text); background: var(--color-canvas); font-size: 12px; }
+.advanced { margin-top: 26px; padding-top: 16px; border-top: 1px solid var(--color-border); }
+.advanced summary { cursor: pointer; color: var(--color-text-muted); font-size: 12px; }
+.advanced[open] summary { margin-bottom: 10px; }
+.connect-prompt { margin: 12px 0 0; text-align: center; }
+.connect-prompt .primary-button { display: inline-flex; }

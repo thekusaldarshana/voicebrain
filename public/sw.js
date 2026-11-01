@@ -1,4 +1,4 @@
-/* Trapper Voice service worker.
+/* voicebrain service worker.
  * 1. Opens the app offline (precached build output, filled in by vite.config.ts).
  * 2. Uploads waiting notes when the browser says the network is back, even with the app closed.
  * The upload rules below mirror src/lib/rules.ts; tests/sw-parity.test.ts fails if they drift apart. */
@@ -6,9 +6,9 @@
 const VERSION = 'dev' /* @version */
 const PRECACHE = [] /* @precache */
 const CACHE = `tv-${VERSION}`
-const DB_NAME = 'trapper-voice'
+const DB_NAME = 'trapper-voice' // an internal name, kept so notes already on a phone stay where they are
 const LOCK = 'tv-upload'
-const APP_VERSION = '0.1.0'
+const APP_VERSION = '0.2.0'
 
 /* ---- upload rules (keep identical to src/lib/rules.ts) ---- */
 
@@ -137,7 +137,7 @@ async function uploadOne(db, note, settings) {
     device: settings.deviceName,
     timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
     utcOffsetMinutes: -new Date(note.createdAt).getTimezoneOffset(),
-    app: `trapper-voice/${APP_VERSION}`,
+    app: `voicebrain-app/${APP_VERSION}`,
   }
   const form = new FormData()
   form.append('meta', JSON.stringify(meta))

@@ -3,6 +3,7 @@ import { notifyChanged } from './changes'
 import { normalizeEndpoint } from './endpoint'
 import { errorMessage } from './errors'
 import { extensionFor } from './mime'
+import { ServerError, authHeaders, editOnServer } from './server'
 import { classifyStatus, retryDelayMs, statusMessage, uploadTimeoutMs } from './rules'
 import { loadSettings } from './settings'
 import { APP_VERSION, type Note, type Settings } from './types'
@@ -24,12 +25,8 @@ export function uploadMeta(note: Note, settings: Settings) {
     device: settings.deviceName,
     timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
     utcOffsetMinutes: -new Date(note.createdAt).getTimezoneOffset(),
-    app: `trapper-voice/${APP_VERSION}`,
+    app: `voicebrain-app/${APP_VERSION}`,
   }
-}
-
-export function authHeaders(settings: Pick<Settings, 'token'>): Record<string, string> {
-  return settings.token ? { Authorization: `Bearer ${settings.token}` } : {}
 }
 
 export interface PingResult { ok: boolean; message: string }
@@ -136,6 +133,24 @@ export async function nextRetryAt(): Promise<number | null> {
   return times.length ? Math.min(...times) : null
 }
 
+/** Sends renames and tag changes made after a note was uploaded. They stay queued until the server has them. */
+export async function flushEdits(): Promise<void> {
+  const settings = await loadSettings()
+  if (!normalizeEndpoint(settings.endpoint)) return
+  let sent = false
+  for (const note of await listNotes()) {
+    if (!note.editPending || note.status !== 'uploaded') continue
+    try {
+      await editOnServer(settings, note.id, { title: note.title, tags: note.tags })
+      const fresh = await getNote(note.id) // keep the flag if the person edited again while this was in flight
+      if (fresh && fresh.title === note.title && fresh.tags.join('\n') === note.tags.join('\n')) { await updateNote(note.id, { editPending: false }); sent = true }
+    } catch (error) {
+      if (error instanceof ServerError && (error.status === 401 || error.status === 403)) return // not connected: nothing will work until it is
+    }
+  }
+  if (sent) notifyChanged()
+}
+
 export async function registerBackgroundSync(): Promise<void> {
   try {
     const registration = await navigator.serviceWorker?.ready
@@ -157,11 +172,14 @@ export function kickUploads(options: FlushOptions = {}): void {
     kicking = true
     try {
       await flushUploads(options)
+      await flushEdits()
       void registerBackgroundSync()
     } finally {
       kicking = false
     }
-    const at = await nextRetryAt()
+    const retryAt = await nextRetryAt()
+    const editsWaiting = (await listNotes()).some(note => note.editPending && note.status === 'uploaded')
+    const at = retryAt ?? (editsWaiting ? Date.now() + 30_000 : null)
     if (at !== null) timer = setTimeout(() => kickUploads(), Math.max(1000, at - Date.now()))
   }, 250)
 }

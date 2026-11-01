@@ -1,7 +1,9 @@
 // End-to-end check of the built app (dist/) in real Chromium with a fake microphone, against the reference receiver.
 // Usage: npm run build && node scripts/e2e.mjs      (CHROMIUM_PATH overrides the browser location)
 import assert from 'node:assert/strict'
+import { existsSync } from 'node:fs'
 import { createServer } from 'node:http'
+import { createServer as createNet } from 'node:net'
 import { mkdir, mkdtemp, readFile, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { extname, join, normalize } from 'node:path'
@@ -10,9 +12,12 @@ import { chromium } from 'playwright-core'
 import { createApp } from '../server/src/app.ts'
 import { loadConfig } from '../server/src/config.ts'
 
-// The real backend (upload endpoint and storage) with transcription and the worker switched off.
-function createReceiver({ token, dataDir }) {
-  const app = createApp(loadConfig({ INGEST_TOKEN: token, DATA_DIR: dataDir, HOST: '127.0.0.1', WORKER: '0', GIT: '0' }), { log: () => {} })
+const PASSPHRASE = 'e2e-passphrase-0123456789'
+const freePort = () => new Promise(resolve => { const probe = createNet(); probe.listen(0, '127.0.0.1', () => { const { port } = probe.address(); probe.close(() => resolve(port)) }) })
+
+// The real backend (upload, pairing, editing, deleting) with transcription and the worker switched off.
+function createReceiver({ token, dataDir, port }) {
+  const app = createApp(loadConfig({ INGEST_TOKEN: token, DATA_DIR: dataDir, HOST: '127.0.0.1', WORKER: '0', GIT: '0', OWNER_PASSPHRASE: PASSPHRASE, PUBLIC_URL: `http://127.0.0.1:${port}` }), { log: () => {} })
   return {
     inbox: app.brain.store.inbox,
     notes: () => app.brain.store.ids(),
@@ -42,8 +47,9 @@ await new Promise(done => app.listen(0, '127.0.0.1', done))
 const APP = `http://localhost:${app.address().port}`
 
 const dataDir = await mkdtemp(join(tmpdir(), 'tv-e2e-'))
-let receiver = createReceiver({ token: TOKEN, dataDir })
-const receiverPort = await receiver.listen(0)
+const receiverPort = await freePort()
+let receiver = createReceiver({ token: TOKEN, dataDir, port: receiverPort })
+await receiver.listen(receiverPort)
 const ENDPOINT = `http://127.0.0.1:${receiverPort}`
 
 const browser = await chromium.launch({
@@ -99,7 +105,7 @@ console.log(`App ${APP}  receiver ${ENDPOINT}`)
 await step('opens on the Record screen with no console errors', async () => {
   await page.goto(`${APP}/`)
   await page.getByRole('heading', { name: 'Record', level: 1 }).waitFor()
-  assert.equal(await page.title(), 'Trapper Voice')
+  assert.equal(await page.title(), 'voicebrain')
   await page.screenshot({ path: join(shots, '01-record-idle-phone.png') })
 })
 
@@ -205,7 +211,7 @@ await step('server down: retries by itself with backoff, then succeeds when it i
     await page.locator('.timer-message').getByText(/Will retry in \d+s/).waitFor({ timeout: 15_000 })
     assert.equal((await readdirCount()), 4)
   } finally {
-    receiver = createReceiver({ token: TOKEN, dataDir })
+    receiver = createReceiver({ token: TOKEN, dataDir, port: receiverPort })
     await receiver.listen(receiverPort)
   }
   await waitForNotes(5, 'note after the server came back') // first retry is due in ~5s
@@ -214,6 +220,7 @@ async function readdirCount() { return (await stored()).length }
 
 await step('wrong token: asks for attention, then recovers once the token is fixed', async () => {
   await page.goto(`${APP}/#/settings`)
+  await page.getByText('Advanced: use an address and token by hand').click()
   const tokenField = page.locator('label:has-text("Access token") input')
   await tokenField.fill('not-the-token')
   await page.getByRole('button', { name: 'Save', exact: true }).click()
@@ -226,6 +233,7 @@ await step('wrong token: asks for attention, then recovers once the token is fix
   await page.screenshot({ path: join(shots, '06-needs-attention-phone.png'), fullPage: true })
   assert.equal((await stored()).length, 5)
   await page.goto(`${APP}/#/settings`)
+  await page.getByText('Advanced: use an address and token by hand').click()
   await page.locator('label:has-text("Access token") input').fill(TOKEN)
   await page.getByRole('button', { name: 'Save', exact: true }).click()
   await waitForNotes(6, 'note after fixing the token')
@@ -237,12 +245,12 @@ await step('delete has an Undo window, then removes only the local copy', async 
   await rows.first().waitFor()
   const before = await rows.count()
   await rows.first().getByRole('button').first().click()
-  await rows.first().getByRole('button', { name: 'Delete' }).click()
+  await rows.first().getByRole('button', { name: 'Remove from this device' }).click()
   assert.equal(await rows.count(), before - 1)
   await page.getByRole('button', { name: 'Undo' }).click()
   assert.equal(await rows.count(), before)
   await rows.first().getByRole('button').first().click() // the restored row is collapsed again
-  await rows.first().getByRole('button', { name: 'Delete' }).click()
+  await rows.first().getByRole('button', { name: 'Remove from this device' }).click()
   await page.waitForTimeout(8000)
   assert.equal(await rows.count(), before - 1)
   await page.reload()
@@ -311,6 +319,87 @@ await step('works offline from the first launch, and uploads from the service wo
   await keepAlive.close()
 })
 
+const admin = { Authorization: `Bearer ${TOKEN}` }
+const serverDevices = async () => (await (await fetch(`${ENDPOINT}/v1/devices`, { headers: admin })).json()).devices
+let tablet
+
+await step('one tap connects a new device: the app gets a code, opens the approval page, and connects after the passphrase', async () => {
+  const fresh = await browser.newContext({ viewport: { width: 390, height: 844 }, permissions: ['microphone'] })
+  tablet = await fresh.newPage()
+  watch(tablet)
+  await tablet.goto(`${APP}/#/settings`)
+  await tablet.getByRole('heading', { name: 'Settings', level: 1 }).waitFor()
+  assert.equal(await tablet.getByRole('button', { name: 'Connect to voicebrain' }).isVisible(), true)
+  await tablet.screenshot({ path: join(shots, '10-connect-idle.png'), fullPage: true })
+  await tablet.getByRole('button', { name: 'Use a different server' }).click() // the test server, not the real default
+  await tablet.getByLabel('Server address').first().fill(ENDPOINT)
+  await tablet.getByRole('button', { name: 'Done' }).click()
+  const before = (await serverDevices()).length
+  const [popup] = await Promise.all([tablet.waitForEvent('popup'), tablet.getByRole('button', { name: 'Connect to voicebrain' }).click()])
+  const code = await tablet.locator('.connect-code').innerText() // the app generated this
+  assert.match(code, /^[A-HJKMNP-Z2-9]{4}-[A-HJKMNP-Z2-9]{4}$/)
+  await tablet.screenshot({ path: join(shots, '11-connect-waiting.png'), fullPage: true })
+  await popup.waitForURL(/\/pair\?code=/) // the app opened the server's page by itself, with the code already filled in
+  assert.equal(await popup.locator('input[name=code]').inputValue(), code)
+  await popup.getByRole('button', { name: 'Approve' }).click() // no passphrase yet: refused, nothing approved
+  await popup.getByText('That passphrase is not right.').waitFor()
+  assert.equal((await serverDevices()).length, before)
+  await popup.locator('input[name=passphrase]').fill(PASSPHRASE)
+  await popup.getByRole('button', { name: 'Approve' }).click()
+  await popup.getByText('Device connected').waitFor()
+  await tablet.getByText('Connected', { exact: false }).first().waitFor({ timeout: 20_000 }) // nothing was copied or pasted
+  const devices = await serverDevices()
+  assert.equal(devices.length, before + 1)
+  await tablet.screenshot({ path: join(shots, '12-connected.png'), fullPage: true })
+})
+
+await step('the newly connected device uploads with its own token', async () => {
+  await tablet.goto(`${APP}/#/record`)
+  const before = (await stored()).length
+  await recordNote(tablet, { seconds: 2 })
+  await waitForNotes(before + 1, 'a note uploaded by the new device')
+})
+
+const newestRow = async () => {
+  await tablet.goto(`${APP}/#/library`)
+  const row = tablet.locator('.note-row').first()
+  await row.waitFor()
+  if (await row.locator('.note-detail').count() === 0) await row.getByRole('button').first().click()
+  const id = (await row.locator('.note-detail').getAttribute('id')).replace('note-', '')
+  return { row, id }
+}
+
+await step('renaming an uploaded note reaches the server', async () => {
+  const { row, id } = await newestRow()
+  const title = row.getByLabel('Title')
+  await title.fill('Named on the tablet')
+  await title.press('Tab')
+  await until(async () => { try { return JSON.parse(await readFile(join(receiver.inbox, id, 'edits.json'), 'utf8')).userTitle === 'Named on the tablet' } catch { return false } }, 'the rename to reach the server')
+})
+
+await step('delete everywhere asks twice, then removes the note from the server and the device', async () => {
+  const { row, id } = await newestRow()
+  const before = (await stored()).length
+  const rowsBefore = await tablet.locator('.note-row').count()
+  await row.getByRole('button', { name: 'Delete everywhere' }).click()
+  await row.getByRole('button', { name: 'Tap again to delete everywhere' }).waitFor()
+  assert.equal((await stored()).length, before) // the first tap only asks
+  await tablet.screenshot({ path: join(shots, '13-delete-confirm.png'), fullPage: true })
+  await row.getByRole('button', { name: 'Tap again to delete everywhere' }).click()
+  await until(async () => (await stored()).length === before - 1, 'the server to lose the note')
+  assert.equal(existsSync(join(receiver.inbox, id)), false) // audio, transcript and the rest are gone
+  await until(async () => (await tablet.locator('.note-row').count()) === rowsBefore - 1, 'the note to leave the list')
+})
+
+await step('disconnecting cuts this device off on the server', async () => {
+  const before = (await serverDevices()).length
+  await tablet.goto(`${APP}/#/settings`)
+  await tablet.getByRole('button', { name: 'Disconnect this device' }).click()
+  await tablet.getByRole('button', { name: 'Connect to voicebrain' }).waitFor()
+  await until(async () => (await serverDevices()).length === before - 1, 'the server to forget the device')
+  await tablet.context().close()
+})
+
 await step('no page error or console error occurred', async () => assert.deepEqual(problems, []))
 
 await step('layout: no sideways scrolling at 320px, every button has a name, desktop looks right', async () => {
@@ -322,7 +411,7 @@ await step('layout: no sideways scrolling at 320px, every button has a name, des
     await narrow.waitForTimeout(400)
     const overflow = await narrow.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth)
     assert.ok(overflow <= 0, `${hash}: page is ${overflow}px wider than 320px`)
-    const unnamed = await narrow.evaluate(() => [...document.querySelectorAll('button')].filter(button => !(button.innerText.trim() || button.getAttribute('aria-label'))).length)
+    const unnamed = await narrow.evaluate(() => [...document.querySelectorAll('button')].filter(button => !((button.textContent ?? '').trim() || button.getAttribute('aria-label'))).length)
     assert.equal(unnamed, 0, `${hash}: buttons without a name`)
   }
   await narrow.setViewportSize({ width: 1280, height: 800 })

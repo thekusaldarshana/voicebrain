@@ -1,7 +1,10 @@
 import { deleteNoteCompletely, getAudio, getNote, listNotes, putNote, removeAudio, saveAudio, updateNote } from './db'
 import { notifyChanged } from './changes'
 import { extensionFor } from './mime'
+import { deleteOnServer } from './server'
+import { loadSettings } from './settings'
 import type { Note } from './types'
+import { kickUploads } from './uploader'
 
 export function newNote(patch: Partial<Note> = {}): Note {
   return {
@@ -25,17 +28,22 @@ export function newNote(patch: Partial<Note> = {}): Note {
   }
 }
 
+/** A note that has already been sent (or is being sent) needs its edit sent too; one still waiting takes it along with the upload. */
+const syncs = (note: Note | undefined) => (note && (note.status === 'uploaded' || note.status === 'uploading') ? { editPending: true } : {})
+
 export async function renameNote(id: string, title: string): Promise<void> {
-  await updateNote(id, { title: title.trim().slice(0, 140) })
+  await updateNote(id, { title: title.trim().slice(0, 140), ...syncs(await getNote(id)) })
   notifyChanged()
+  kickUploads({ ignoreBackoff: true })
 }
 
 export async function setNoteTags(id: string, tags: string[]): Promise<void> {
-  await updateNote(id, { tags })
+  await updateNote(id, { tags, ...syncs(await getNote(id)) })
   notifyChanged()
+  kickUploads({ ignoreBackoff: true })
 }
 
-/** Metadata edited after upload only changes this device's copy. The server keeps what it received. */
+/** Removes the note from this device only. The server's copy is not touched. */
 export async function removeNote(id: string): Promise<void> {
   await deleteNoteCompletely(id)
   notifyChanged()
@@ -52,6 +60,12 @@ export async function retryFailed(): Promise<number> {
   }
   if (count) notifyChanged()
   return count
+}
+
+/** Deletes the note from the server first, and only then from this device, so a failure never leaves you thinking it is gone. */
+export async function deleteEverywhere(id: string): Promise<void> {
+  await deleteOnServer(await loadSettings(), id)
+  await removeNote(id)
 }
 
 export async function retryNote(id: string): Promise<void> {

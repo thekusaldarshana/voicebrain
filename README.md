@@ -1,4 +1,4 @@
-# Trapper Voice
+# voicebrain (the recorder app)
 
 Record a voice note. When you tap **Stop**, everything after that happens on its own: the note is saved on the device, then uploaded to your server, retried if the connection is bad, and finished even if you have closed the app.
 
@@ -26,12 +26,12 @@ The other half is `server/`: it receives the uploads, transcribes them, extracts
 **Library**
 - Notes grouped by day, search by title or tag, filters (All / Waiting / Uploaded / Needs attention).
 - Every status is written out in words, never colour alone.
-- Play back, jump to marked moments, rename, tag, download, delete with a 7-second **Undo**. "Upload now" and "Retry" per note.
+- Play back, jump to marked moments, rename, tag (renames and tags also update your server), download. **Remove from this device** has a 7-second Undo; **Delete everywhere** asks twice and erases the note from your server too. "Upload now" and "Retry" per note.
 - **Import audio** adds existing recordings (m4a, mp3, wav, ogg, …) to the same queue.
 
 **Settings**
-- Server address and token, **Test connection**, pairing link (`https://app/#/pair?e=<server>&t=<token>&n=<name>`; the fragment never reaches a server and is removed from the address bar).
-- Auto-upload on/off, how long to keep audio on the device after upload (0 days to forever), storage use, "Keep my data" (persistent storage), install help.
+- **Connect to voicebrain** is one tap: the app asks your server for a code, opens the server's approval page, and connects by itself after you type your passphrase there once. Nothing is copied or pasted, and each device gets its own token that can be revoked (**Disconnect this device** does it). Typing an address and token by hand is still there under *Advanced*, and so are pairing links.
+- **Test connection**, auto-upload on/off, how long to keep audio on the device after upload (0 days to forever), storage use, "Keep my data" (persistent storage), install help.
 
 **Works offline** from the first launch (the build output is precached).
 
@@ -68,13 +68,15 @@ The server stores each upload as `audio.<ext>` plus `meta.json` and runs it thro
 ## Verify
 
 ```bash
-npm test            # 23 unit tests: formatting, upload rules, service-worker parity
-npm run server:test # 97 backend tests: pipeline, search, vault, OAuth, MCP, providers, upload contract
+npm test            # 38 app tests: formatting, upload rules, service-worker parity, connecting a device, server calls
+npm run server:test # 155 backend tests: pipeline, search, vault, delete, edits, pairing, OAuth, MCP, providers
 npm run lint
 npm run build && npm run test:e2e
 ```
 
-`test:e2e` drives the built app in real Chromium with a fake microphone against the receiver: pairing, record, mark, pause, auto-upload, offline, server outage, wrong token, delete and undo, crash recovery, import, offline launch, upload by the service worker with every tab closed, layout at 320 px, accessible button names. Screenshots go to `artifacts/e2e/`.
+`test:e2e` drives the built app in real Chromium with a fake microphone against the real backend, in 20 steps: pairing link, record, mark, pause, auto-upload, offline, server outage, wrong token, remove from this device with Undo, crash recovery, import, offline launch, upload by the service worker with every tab closed, **one-tap connect (a wrong passphrase refused first, then approved)**, upload with the device's own token, **rename reaching the server**, **delete everywhere (two taps)**, **disconnecting a device**, layout at 320 px and accessible button names. Screenshots go to `artifacts/e2e/`.
+
+No browser installed (a server, say)? Run it in Playwright's image: `docker run --rm --ipc=host -v "$PWD":/work -w /work -e CHROMIUM_PATH=/ms-playwright/chromium-1248/chrome-linux64/chrome mcr.microsoft.com/playwright:v1.64.1-noble node scripts/e2e.mjs` (the Chromium folder name changes with the Playwright version).
 
 ## Desktop and Android with Tauri
 

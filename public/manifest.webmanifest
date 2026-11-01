@@ -1,7 +1,7 @@
 {
   "id": "./",
-  "name": "Trapper Voice",
-  "short_name": "Voice",
+  "name": "voicebrain",
+  "short_name": "voicebrain",
   "description": "Record a voice note. It uploads by itself.",
   "start_url": "./",
   "scope": "./",

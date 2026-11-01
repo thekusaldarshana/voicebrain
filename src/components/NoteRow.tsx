@@ -2,9 +2,11 @@ import { useEffect, useRef, useState } from 'react'
 import { Bookmark, ChevronDown, Download, RotateCw, Trash2, Upload } from 'lucide-react'
 import { getAudio } from '../lib/db'
 import { clockTime, defaultTitle, formatBytes, formatClock, formatDuration, parseTags } from '../lib/format'
-import { downloadNote, renameNote, retryNote, setNoteTags } from '../lib/notes'
+import { deleteEverywhere, downloadNote, renameNote, retryNote, setNoteTags } from '../lib/notes'
+import { isConfigured } from '../lib/endpoint'
+import { errorMessage } from '../lib/errors'
 import { kickUploads } from '../lib/uploader'
-import { useOnline, useSettings } from '../lib/hooks'
+import { useOnline, useSettings, useToast } from '../lib/hooks'
 import type { Note } from '../lib/types'
 import { describeStatus } from '../lib/statusView'
 import { StatusLabel } from './StatusLabel'
@@ -18,10 +20,20 @@ export function NoteRow({ note, now, onDelete }: { note: Note; now: number; onDe
   const tags = tagsDraft ?? note.tags.join(', ')
   const player = useRef<HTMLAudioElement>(null)
   const { settings } = useSettings()
+  const toast = useToast()
+  const [confirming, setConfirming] = useState(false)
+  const [deleting, setDeleting] = useState(false)
   const online = useOnline()
   const view = describeStatus(note, settings, now, online)
   const heading = note.title || defaultTitle(note.createdAt)
   const panel = `note-${note.id}`
+
+  // Deleting from the server cannot be undone, so it takes two deliberate taps; the second must come within a few seconds.
+  useEffect(() => {
+    if (!confirming) return
+    const timer = setTimeout(() => setConfirming(false), 6000)
+    return () => clearTimeout(timer)
+  }, [confirming])
 
   useEffect(() => {
     if (!open || note.audioRemoved) return
@@ -34,6 +46,20 @@ export function NoteRow({ note, now, onDelete }: { note: Note; now: number; onDe
     })
     return () => { cancelled = true; if (url) URL.revokeObjectURL(url); setAudioUrl(null) }
   }, [open, note.id, note.audioRemoved])
+
+  const canDeleteEverywhere = note.status === 'uploaded' && isConfigured(settings)
+  const deleteForGood = async () => {
+    if (!confirming) { setConfirming(true); return }
+    setDeleting(true)
+    try {
+      await deleteEverywhere(note.id)
+      toast('Deleted everywhere: the recording and its transcript are gone from your server and this device.')
+    } catch (error) {
+      setConfirming(false)
+      setDeleting(false)
+      toast(`Nothing was deleted. ${errorMessage(error)}`)
+    }
+  }
 
   const retry = async () => {
     if (note.status === 'failed') await retryNote(note.id)
@@ -74,14 +100,17 @@ export function NoteRow({ note, now, onDelete }: { note: Note; now: number; onDe
           onBlur={() => { const next = parseTags(tags); if (next.join() !== note.tags.join()) void setNoteTags(note.id, next); setTagsDraft(null) }}
           onKeyDown={event => { if (event.key === 'Enter') event.currentTarget.blur() }} />
       </label>
-      {note.status === 'uploaded' && <p className="hint">Title and tags edited here change this device only. The server keeps what it received.</p>}
+      {note.status === 'uploaded' && <p className="hint">{note.editPending ? 'Your change is saved here and will reach your server as soon as it can.' : 'Names and tags you change here also update your server.'}</p>}
       <div className="row-actions">
         {(note.status === 'local' || note.status === 'failed') && <button type="button" className="secondary-button" onClick={retry}>
           {note.status === 'failed' ? <RotateCw size={14} aria-hidden="true" /> : <Upload size={14} aria-hidden="true" />}
           {note.status === 'failed' ? 'Retry upload' : 'Upload now'}
         </button>}
         {!note.audioRemoved && <button type="button" className="secondary-button" onClick={() => void downloadNote(note.id)}><Download size={14} aria-hidden="true" />Download</button>}
-        <button type="button" className="secondary-button danger" onClick={() => onDelete(note)}><Trash2 size={14} aria-hidden="true" />Delete</button>
+        <button type="button" className="secondary-button" onClick={() => onDelete(note)}><Trash2 size={14} aria-hidden="true" />{note.status === 'uploaded' ? 'Remove from this device' : 'Delete'}</button>
+        {canDeleteEverywhere && <button type="button" className="secondary-button danger" onClick={() => void deleteForGood()} disabled={deleting} aria-live="polite">
+          <Trash2 size={14} aria-hidden="true" />{deleting ? 'Deleting…' : confirming ? 'Tap again to delete everywhere' : 'Delete everywhere'}
+        </button>}
       </div>
     </div>}
   </li>
