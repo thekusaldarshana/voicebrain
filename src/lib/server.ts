@@ -69,3 +69,23 @@ export async function disconnectThisDevice(settings: Credentials & Pick<Settings
   if (!settings.deviceId || !settings.token) return
   try { await call(settings, `/v1/devices/${encodeURIComponent(settings.deviceId)}`, { method: 'DELETE' }, fetchImpl) } catch { /* the token is cleared locally either way */ }
 }
+
+export interface AccountInfo {
+  /** Who this device belongs to. Null for a device connected the old way (with the server's own token). */
+  account: { email: string; name: string } | null
+  drive: { enabled: boolean; connected: boolean; canConnect: boolean }
+}
+
+/** Who this device is signed in as, and whether their Google Drive is connected. Null when the server cannot say. */
+export async function fetchAccount(settings: Credentials, fetchImpl: Fetch = fetch): Promise<AccountInfo | null> {
+  try {
+    const [me, drive] = await Promise.all([call(settings, '/v1/me', {}, fetchImpl), call(settings, '/v1/drive', {}, fetchImpl)])
+    if (!me.ok) return null
+    const who = (await me.json()) as { account?: { email?: unknown; name?: unknown } | null }
+    const state = drive.ok ? ((await drive.json()) as { enabled?: unknown; connected?: unknown; canConnect?: unknown }) : {}
+    return {
+      account: who.account && typeof who.account.email === 'string' ? { email: who.account.email, name: typeof who.account.name === 'string' ? who.account.name : who.account.email } : null,
+      drive: { enabled: state.enabled === true, connected: state.connected === true, canConnect: state.canConnect === true },
+    }
+  } catch { return null }
+}

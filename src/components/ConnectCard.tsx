@@ -4,7 +4,7 @@ import { connectDevice, type ConnectState } from '../lib/connect'
 import { DEFAULT_SERVER } from '../lib/defaults'
 import { normalizeEndpoint } from '../lib/endpoint'
 import { useSettings, useToast } from '../lib/hooks'
-import { disconnectThisDevice } from '../lib/server'
+import { disconnectThisDevice, fetchAccount, type AccountInfo } from '../lib/server'
 import { kickUploads, pingServer } from '../lib/uploader'
 
 const host = (endpoint: string) => { try { return new URL(endpoint).host } catch { return endpoint } }
@@ -12,7 +12,7 @@ const minutes = (ms: number) => `${Math.floor(Math.max(0, ms) / 60_000)}:${Strin
 
 /**
  * One tap to connect. The app asks the server for a code, opens the server's approval page, and waits.
- * The person's only part is the passphrase, once, on that page: the one thing that has to be typed by a human.
+ * The person's only part is signing in with Google, once, on that page.
  */
 export function ConnectCard({ autoStart = false }: { autoStart?: boolean }) {
   const { settings, update } = useSettings()
@@ -24,6 +24,19 @@ export function ConnectCard({ autoStart = false }: { autoStart?: boolean }) {
   const [test, setTest] = useState<{ ok: boolean; message: string } | null>(null)
   const abort = useRef<AbortController | null>(null)
   const connected = Boolean(settings.endpoint && settings.token)
+  const [account, setAccount] = useState<AccountInfo | null>(null)
+
+  // Who this device belongs to, and whether their Drive is connected. Asked again when the person comes back to the tab
+  // (they may just have connected Drive in another one).
+  useEffect(() => {
+    if (!connected) { setAccount(null); return }
+    let live = true
+    const load = () => { void fetchAccount(settings).then(info => { if (live) setAccount(info) }) }
+    load()
+    document.addEventListener('visibilitychange', load)
+    return () => { live = false; document.removeEventListener('visibilitychange', load) }
+    // oxlint-disable-next-line react/exhaustive-deps
+  }, [connected, settings.endpoint, settings.token])
 
   useEffect(() => {
     if (state.phase !== 'waiting') return
@@ -68,15 +81,19 @@ export function ConnectCard({ autoStart = false }: { autoStart?: boolean }) {
     await disconnectThisDevice(settings)
     await update({ token: '', deviceId: '' })
     setTest(null)
-    toast('This device is disconnected. Recordings stay on it until you connect again.')
+    toast('Signed out of this device. Recordings stay on it until you connect again.')
   }
 
   if (connected) {
     return <div className="connect">
-      <p className="connect-status"><Check size={16} aria-hidden="true" /><span><strong>Connected</strong> to {host(settings.endpoint)} as “{settings.deviceName}”.</span></p>
+      <p className="connect-status"><Check size={16} aria-hidden="true" /><span><strong>Signed in</strong>{account?.account ? <> as <strong>{account.account.email}</strong></> : null} on {host(settings.endpoint)} as “{settings.deviceName}”.</span></p>
+      {account?.drive.enabled && account.drive.canConnect && (account.drive.connected
+        ? <p className="hint">Google Drive: connected. Your notes are kept in your own Drive.</p>
+        : <p className="hint warn"><CircleAlert size={12} aria-hidden="true" /> Google Drive is not connected, so new notes cannot be saved yet. <a href={`${normalizeEndpoint(settings.endpoint)}/auth/drive/start`} target="_blank" rel="noopener noreferrer">Connect Google Drive</a></p>)}
       <div className="row-actions">
         <button type="button" className="secondary-button" onClick={async () => setTest(await pingServer(settings))}>Test connection</button>
-        <button type="button" className="secondary-button danger" onClick={() => void disconnect()}>Disconnect this device</button>
+        {account?.account && <a className="secondary-button" href={`${normalizeEndpoint(settings.endpoint)}/account`} target="_blank" rel="noopener noreferrer">Manage account</a>}
+        <button type="button" className="secondary-button danger" onClick={() => void disconnect()}>Sign out of this device</button>
       </div>
       {test && <p className={`test-result ${test.ok ? 'ok' : 'bad'}`} role="status">{test.message}</p>}
     </div>
@@ -84,7 +101,7 @@ export function ConnectCard({ autoStart = false }: { autoStart?: boolean }) {
 
   if (state.phase === 'waiting') {
     return <div className="connect" aria-live="polite">
-      <p className="hint">Your server’s page opened. Check it shows this code, type your passphrase, and tap Approve. This screen connects by itself.</p>
+      <p className="hint">Your server’s page opened. Check it shows this code, sign in with Google if it asks, and tap Approve. This screen connects by itself.</p>
       <p className="connect-code" aria-label={`Pairing code ${state.code.split('').join(' ')}`}>{state.code}</p>
       <div className="row-actions">
         <a className="primary-button" href={state.url} target="_blank" rel="noopener noreferrer"><ExternalLink size={14} aria-hidden="true" />Open the approval page</a>
@@ -96,7 +113,7 @@ export function ConnectCard({ autoStart = false }: { autoStart?: boolean }) {
 
   return <div className="connect">
     <button type="button" className="primary-button big" onClick={tap} disabled={state.phase === 'starting'}>
-      {state.phase === 'starting' ? 'Contacting your server…' : 'Connect to voicebrain'}
+      {state.phase === 'starting' ? 'Contacting your server…' : 'Sign in to voicebrain'}
     </button>
     {state.phase === 'failed' && <p className="hint warn" role="alert"><CircleAlert size={12} aria-hidden="true" /> {state.message}</p>}
     <p className="hint">

@@ -134,7 +134,7 @@ export function RecordPage() {
           </div>
 
           <p className={`timer-message${snapshot.error || snapshot.warning ? ' is-alert' : ''}`} role="status" aria-live="polite">{message}</p>
-          {!connected && snapshot.state === 'idle' && <p className="connect-prompt"><a className="primary-button" href="#/settings?connect=1">Connect to voicebrain</a></p>}
+          {!connected && snapshot.state === 'idle' && <p className="connect-prompt"><a className="primary-button" href="#/settings?connect=1">Sign in to voicebrain</a></p>}
           <p className="timer-help">Space starts and stops · M marks a moment. The screen stays on while recording.</p>
         </div>
       </section>

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { PairingUnavailable, ServerError, authHeaders, deleteOnServer, disconnectThisDevice, editOnServer, pollPairing, startPairing } from '../src/lib/server'
+import { PairingUnavailable, ServerError, authHeaders, deleteOnServer, disconnectThisDevice, editOnServer, fetchAccount, pollPairing, startPairing } from '../src/lib/server'
 
 const settings = { endpoint: 'vb.example.com/', token: 'vbd_secret' }
 type Seen = { url: string; method?: string; headers: Record<string, string>; body?: string }
@@ -67,5 +67,31 @@ describe('talking to the server', () => {
     const none = fakeFetch(204)
     await disconnectThisDevice({ ...settings, deviceId: '' }, none.fetchImpl) // a hand-pasted token has no device id
     expect(none.seen).toHaveLength(0)
+  })
+})
+
+describe('who this device is signed in as', () => {
+  const answering = (routes: Record<string, { status: number; body: unknown }>) => (async (url: string) => {
+    const hit = routes[new URL(url).pathname]
+    return hit ? new Response(JSON.stringify(hit.body), { status: hit.status }) : new Response('{}', { status: 404 })
+  }) as unknown as typeof fetch
+
+  it('reads the account and the Drive state', async () => {
+    const fetchImpl = answering({ '/v1/me': { status: 200, body: { account: { email: 'a@b.c', name: 'A' } } }, '/v1/drive': { status: 200, body: { enabled: true, connected: false, canConnect: true } } })
+    expect(await fetchAccount(settings, fetchImpl)).toEqual({ account: { email: 'a@b.c', name: 'A' }, drive: { enabled: true, connected: false, canConnect: true } })
+  })
+
+  it('has no account for a device connected the old way, and nothing to offer when Drive is off', async () => {
+    const fetchImpl = answering({ '/v1/me': { status: 200, body: { account: null } }, '/v1/drive': { status: 200, body: { enabled: false, connected: false, canConnect: false } } })
+    expect(await fetchAccount(settings, fetchImpl)).toEqual({ account: null, drive: { enabled: false, connected: false, canConnect: false } })
+  })
+
+  it('says nothing rather than guess when the server refuses or cannot be reached', async () => {
+    expect(await fetchAccount(settings, answering({ '/v1/me': { status: 401, body: {} } }))).toBeNull()
+    expect(await fetchAccount(settings, broken)).toBeNull()
+  })
+
+  it('still shows the account when only the Drive answer is missing', async () => {
+    expect(await fetchAccount(settings, answering({ '/v1/me': { status: 200, body: { account: { email: 'a@b.c' } } } }))).toEqual({ account: { email: 'a@b.c', name: 'a@b.c' }, drive: { enabled: false, connected: false, canConnect: false } })
   })
 })

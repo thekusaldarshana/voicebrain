@@ -132,6 +132,43 @@ export function createAuth(options: { users: Users; google: GoogleAuth; publicUr
     })
   }
 
+  // The page a person opens to see who they are signed in as, and to sign out or manage their Drive. Plain HTML, no scripts.
+  const accountPage = (user: User, notice = '') => {
+    const connected = drive?.isConnected(user.id) ?? false
+    const driveBlock = !drive ? '' : connected
+      ? `<h2>Google Drive</h2><p>Connected. Your notes are kept in your own Drive.</p><form method="post" action="/account/drive/disconnect"><button class="quiet" type="submit">Disconnect Drive</button></form>`
+      : `<h2>Google Drive</h2><p>Not connected yet. Connect it so your notes are kept in your own Drive.</p><p><a class="btn" href="/auth/drive/start">Connect Google Drive</a></p>`
+    return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="robots" content="noindex"><title>Your account · voicebrain</title><style>${STYLE}
+h2{margin:24px 0 6px;font-size:15px;font-weight:600;letter-spacing:0;color:#eee}.btn,button{display:inline-block;padding:10px 16px;border-radius:999px;border:1px solid #3a3a3a;background:#d5bea7;color:#111;font:inherit;font-weight:600;text-decoration:none;cursor:pointer}button.quiet{background:none;color:#eee}.note{color:#d5bea7}</style></head>
+<body><main><p class="eyebrow">voicebrain</p><h1>Your account</h1>${notice ? `<p class="note" role="status">${escapeHtml(notice)}</p>` : ''}<p>Signed in as <strong>${escapeHtml(user.email)}</strong>.</p>${driveBlock}
+<h2>Sign out</h2><p>This signs out this browser. Phones and computers you connected stay connected until you disconnect them in the app.</p><form method="post" action="/account/signout"><button class="quiet" type="submit">Sign out</button></form></main></body></html>`
+  }
+  const sendAccount = (res: Response, user: User, notice = '') => {
+    res.setHeader('Cache-Control', 'no-store')
+    res.setHeader('Content-Security-Policy', "frame-ancestors 'none'")
+    res.status(200).type('html').send(accountPage(user, notice))
+  }
+  router.get('/account', (req, res) => {
+    const user = userOf(req)
+    if (!user) { res.redirect(302, signInUrl('/account')); return }
+    sendAccount(res, user)
+  })
+  router.post('/account/signout', (req, res) => {
+    if (!originOk(req)) { page(res, 403, 'Not allowed', 'This request came from another site.'); return }
+    users.endSession(parseCookies(req.headers.cookie)[SESSION_COOKIE] ?? '')
+    res.append('Set-Cookie', cookie(SESSION_COOKIE, '', 0))
+    page(res, 200, 'Signed out', 'You are signed out of voicebrain in this browser.', { href: '/account', text: 'Sign in again' })
+  })
+  router.post('/account/drive/disconnect', async (req, res, next) => {
+    try {
+      if (!originOk(req)) { page(res, 403, 'Not allowed', 'This request came from another site.'); return }
+      const user = userOf(req)
+      if (!user) { res.redirect(303, signInUrl('/account')); return }
+      await drive?.disconnect(user.id)
+      sendAccount(res, user, 'Google Drive is disconnected.')
+    } catch (error) { next(error) }
+  })
+
   router.post('/auth/logout', (req, res) => {
     if (!originOk(req)) { res.status(403).json({ error: 'This request came from another site.' }); return }
     users.endSession(parseCookies(req.headers.cookie)[SESSION_COOKIE] ?? '')

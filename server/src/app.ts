@@ -129,7 +129,7 @@ export function createApp(config: Config, options: PipelineOptions = {}, authOpt
   }
   app.use('/v1', ingestAuth)
   app.get('/v1/ping', (_req, res) => { res.json({ ok: true }) })
-  app.get('/v1/me', (_req, res) => { const device = res.locals.device as { id: string; name: string } | undefined; res.json({ device: device ? { id: device.id, name: device.name } : null, userId: res.locals.userId as string, pairing: Boolean(pairing) }) })
+  app.get('/v1/me', (_req, res) => { const device = res.locals.device as { id: string; name: string } | undefined; res.json({ device: device ? { id: device.id, name: device.name } : null, userId: res.locals.userId as string, account: (() => { const person = users.find(String(res.locals.userId)); return person ? { email: person.email, name: person.name } : null })(), pairing: Boolean(pairing) }) })
   // An already-paired app asks for a short code (or QR) to show, and watches whether it was used.
   app.post('/v1/pair/offer', (_req, res) => {
     if (!pairing) { res.status(501).json({ error: 'Pairing is not set up on this server.' }); return }

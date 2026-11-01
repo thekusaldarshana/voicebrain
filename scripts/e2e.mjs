@@ -329,13 +329,13 @@ await step('one tap connects a new device: the app gets a code, opens the approv
   watch(tablet)
   await tablet.goto(`${APP}/#/settings`)
   await tablet.getByRole('heading', { name: 'Settings', level: 1 }).waitFor()
-  assert.equal(await tablet.getByRole('button', { name: 'Connect to voicebrain' }).isVisible(), true)
+  assert.equal(await tablet.getByRole('button', { name: 'Sign in to voicebrain' }).isVisible(), true)
   await tablet.screenshot({ path: join(shots, '10-connect-idle.png'), fullPage: true })
   await tablet.getByRole('button', { name: 'Use a different server' }).click() // the test server, not the real default
   await tablet.getByLabel('Server address').first().fill(ENDPOINT)
   await tablet.getByRole('button', { name: 'Done' }).click()
   const before = (await serverDevices()).length
-  const [popup] = await Promise.all([tablet.waitForEvent('popup'), tablet.getByRole('button', { name: 'Connect to voicebrain' }).click()])
+  const [popup] = await Promise.all([tablet.waitForEvent('popup'), tablet.getByRole('button', { name: 'Sign in to voicebrain' }).click()])
   const code = await tablet.locator('.connect-code').innerText() // the app generated this
   assert.match(code, /^[A-HJKMNP-Z2-9]{4}-[A-HJKMNP-Z2-9]{4}$/)
   await tablet.screenshot({ path: join(shots, '11-connect-waiting.png'), fullPage: true })
@@ -394,8 +394,8 @@ await step('delete everywhere asks twice, then removes the note from the server 
 await step('disconnecting cuts this device off on the server', async () => {
   const before = (await serverDevices()).length
   await tablet.goto(`${APP}/#/settings`)
-  await tablet.getByRole('button', { name: 'Disconnect this device' }).click()
-  await tablet.getByRole('button', { name: 'Connect to voicebrain' }).waitFor()
+  await tablet.getByRole('button', { name: 'Sign out of this device' }).click()
+  await tablet.getByRole('button', { name: 'Sign in to voicebrain' }).waitFor()
   await until(async () => (await serverDevices()).length === before - 1, 'the server to forget the device')
   await tablet.context().close()
 })
