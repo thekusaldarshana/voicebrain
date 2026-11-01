@@ -76,3 +76,16 @@ export function loadConfig(env: Record<string, string | undefined> = process.env
     insecure,
   }
 }
+
+// ---- where notes are stored (separate from the rest of the config on purpose, so it merges cleanly) ----
+
+export interface StorageConfig {
+  /** `local` keeps notes as files under DATA_DIR/inbox. */
+  backend: 'local'
+}
+
+export function loadStorageConfig(env: Record<string, string | undefined> = process.env): StorageConfig {
+  const backend = (env.STORAGE_BACKEND ?? '').trim() || 'local'
+  if (backend !== 'local') throw new Error(`STORAGE_BACKEND "${backend}" is not available. The only backend is "local".`)
+  return { backend }
+}

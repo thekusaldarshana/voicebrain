@@ -19,7 +19,7 @@ const freePort = () => new Promise(resolve => { const probe = createNet(); probe
 function createReceiver({ token, dataDir, port }) {
   const app = createApp(loadConfig({ INGEST_TOKEN: token, DATA_DIR: dataDir, HOST: '127.0.0.1', WORKER: '0', GIT: '0', OWNER_PASSPHRASE: PASSPHRASE, PUBLIC_URL: `http://127.0.0.1:${port}` }), { log: () => {} })
   return {
-    inbox: app.brain.store.inbox,
+    inbox: join(dataDir, 'inbox'), // this e2e runs the local backend, whose layout is data/inbox/<id>/
     notes: () => app.brain.store.ids(),
     async listen(port) { await app.start(); return app.listen(port) },
     close: () => app.close(),
