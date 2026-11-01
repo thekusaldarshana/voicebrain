@@ -1,6 +1,6 @@
 import type { Brain } from './brain.ts'
 import { digestNote } from './digest.ts'
-import { transcribe, type Fetch } from './stt.ts'
+import { transcribeBytes, type Fetch } from './stt.ts'
 import type { Digest, NoteState } from './types.ts'
 import { NoteGone, PermanentError, errorText, retryDelayMs } from './util.ts'
 
@@ -96,10 +96,10 @@ export class Pipeline {
       let transcript = await store.transcript(id)
       if (!transcript) {
         if (!config.stt) return
-        const audio = store.audioPath(meta)
-        if (!audio) throw new PermanentError('This note has no audio and no text to work from.')
         stage = 'transcribe'
-        transcript = await transcribe(config.stt, audio, meta.mime, this.fetch)
+        const audio = await store.audioBytes(meta)
+        if (!audio) throw new PermanentError('This note has no audio and no text to work from.')
+        transcript = await transcribeBytes(config.stt, audio, meta.audioFile ?? 'audio.webm', meta.mime, this.fetch)
         await store.writeTranscript(id, transcript)
         await this.brain.fileNote(id) // searchable straight away, even if the language model is down
         this.log(`transcribed ${id.slice(0, 8)} (${transcript.text.length} characters)`)

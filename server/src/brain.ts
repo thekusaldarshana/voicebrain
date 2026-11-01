@@ -1,8 +1,10 @@
 import { randomUUID } from 'node:crypto'
 import { stat } from 'node:fs/promises'
-import type { Config } from './config.ts'
+import { loadStorageConfig, type Config } from './config.ts'
 import type { Hit, NoteRow, TaskRow } from './index.ts'
 import { Index } from './index.ts'
+import { createStorage } from './storage-factory.ts'
+import type { NoteStorage } from './storage.ts'
 import { Store } from './store.ts'
 import { cleanTags, cleanTitle, userNamed } from './titles.ts'
 import type { NoteEdits, NoteMeta, TaskStatus, TaskStatusEntry } from './types.ts'
@@ -42,12 +44,13 @@ export class Brain {
   /** Called after something new needs processing (a text note added from chat). */
   onNewWork: () => void = () => undefined
 
-  constructor(config: Config, now: () => Date = () => new Date()) {
+  /** `storage` is where the notes (the source of truth) live; by default the backend named by STORAGE_BACKEND. */
+  constructor(config: Config, now: () => Date = () => new Date(), storage: NoteStorage = createStorage(config.dataDir, loadStorageConfig())) {
     this.config = config
     this.now = now
-    this.store = new Store(config.dataDir)
+    this.store = new Store(storage)
     this.index = new Index(join(config.dataDir, 'index.sqlite'))
-    this.vault = new Vault(this.store.vault, config.gitEnabled)
+    this.vault = new Vault(join(config.dataDir, 'vault'), config.gitEnabled)
   }
 
   today(): string {

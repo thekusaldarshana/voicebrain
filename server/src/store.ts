@@ -1,96 +1,78 @@
-import { randomUUID } from 'node:crypto'
-import { mkdir, readdir, rename, rm, stat } from 'node:fs/promises'
-import { join } from 'node:path'
 import type { Digest, NoteEdits, NoteMeta, NoteState, Transcript } from './types.ts'
-import { NoteGone, UUID, readJson, writeFileAtomic, writeJson } from './util.ts'
+import { OWNER_ID, payloadBytes, type NoteStorage, type StoredStream } from './storage.ts'
+
+const text = new TextDecoder()
+const encodeJson = (value: unknown) => new TextEncoder().encode(`${JSON.stringify(value, null, 2)}\n`)
 
 /**
- * data/inbox/<id>/
- *   meta.json        what the app sent (immutable)
- *   audio.<ext>      the recording (immutable)
- *   transcript.json  the raw words: the permanent record
- *   digest.json      model extraction (regenerable)
- *   state.json       retry bookkeeping
- *   edits.json       later edits to the title and tags (by the user or the assistant)
+ * One person's notes, typed. The bytes live in a `NoteStorage` (local files today, Google Drive next); this
+ * class adds what is the same for every backend: JSON in and out, the state default, and the user id.
+ *
+ * Per note (see storage.ts for which of these are source of truth):
+ *   meta.json  audio.<ext>  transcript.json  digest.json  edits.json  state.json
  */
 export class Store {
-  readonly dataDir: string
-  readonly inbox: string
-  readonly vault: string
+  readonly storage: NoteStorage
+  readonly userId: string
 
-  constructor(dataDir: string) {
-    this.dataDir = dataDir
-    this.inbox = join(dataDir, 'inbox')
-    this.vault = join(dataDir, 'vault')
+  constructor(storage: NoteStorage, userId: string = OWNER_ID) {
+    this.storage = storage
+    this.userId = userId
   }
 
-  dir(id: string): string {
-    if (!UUID.test(id)) throw new Error('bad note id')
-    return join(this.inbox, id)
-  }
-
-  async has(id: string): Promise<boolean> {
-    try { await stat(join(this.dir(id), 'meta.json')); return true } catch { return false }
-  }
+  has(id: string): Promise<boolean> { return this.storage.hasNote(this.userId, id) }
 
   /** Ids of real notes. A folder without meta.json (a half-written or half-deleted note) does not count. */
-  async ids(): Promise<string[]> {
-    let names: string[]
-    try { names = (await readdir(this.inbox)).filter(name => UUID.test(name)).sort() } catch { return [] }
-    const present = await Promise.all(names.map(name => this.has(name)))
-    return names.filter((_, index) => present[index])
+  ids(): Promise<string[]> { return this.storage.listNotes(this.userId) }
+
+  /** Missing and unreadable JSON both read as null: the caller then does the work again. */
+  private async json<T>(id: string, file: string): Promise<T | null> {
+    const bytes = await this.storage.get(this.userId, id, file)
+    if (!bytes) return null
+    try { return JSON.parse(text.decode(bytes)) as T } catch { return null }
   }
 
-  meta(id: string) { return readJson<NoteMeta>(join(this.dir(id), 'meta.json')) }
-  transcript(id: string) { return readJson<Transcript>(join(this.dir(id), 'transcript.json')) }
-  digest(id: string) { return readJson<Digest>(join(this.dir(id), 'digest.json')) }
+  meta(id: string) { return this.json<NoteMeta>(id, 'meta.json') }
+  transcript(id: string) { return this.json<Transcript>(id, 'transcript.json') }
+  digest(id: string) { return this.json<Digest>(id, 'digest.json') }
   async state(id: string): Promise<NoteState> {
-    return (await readJson<NoteState>(join(this.dir(id), 'state.json'))) ?? { attempts: 0, nextAttemptAt: null, lastError: null, failed: false, stage: null }
+    return (await this.json<NoteState>(id, 'state.json')) ?? { attempts: 0, nextAttemptAt: null, lastError: null, failed: false, stage: null }
   }
+  edits(id: string) { return this.json<NoteEdits>(id, 'edits.json') }
 
-  edits(id: string) { return readJson<NoteEdits>(join(this.dir(id), 'edits.json')) }
-
-  /** Every write checks the note still exists, so work that finishes after a delete cannot bring a note back. */
-  private async write(id: string, file: string, value: unknown): Promise<void> {
-    if (!(await this.has(id))) throw new NoteGone(id)
-    await writeJson(join(this.dir(id), file), value)
-  }
+  /** The storage refuses a write to a note that is gone (NoteGone), so work that finishes after a delete cannot bring a note back. */
+  private write(id: string, file: string, value: unknown): Promise<void> { return this.storage.put(this.userId, id, file, encodeJson(value)) }
   writeTranscript(id: string, transcript: Transcript) { return this.write(id, 'transcript.json', transcript) }
   writeDigest(id: string, digest: Digest) { return this.write(id, 'digest.json', digest) }
   writeState(id: string, state: NoteState) { return this.write(id, 'state.json', state) }
   writeEdits(id: string, edits: NoteEdits) { return this.write(id, 'edits.json', edits) }
 
-  /** Removes the audio, the transcript and everything else stored for the note. */
-  async deleteNote(id: string): Promise<void> {
-    await rm(this.dir(id), { recursive: true, force: true })
+  /** Removes the audio, the transcript and everything else stored for the note, wherever the backend keeps it. */
+  deleteNote(id: string): Promise<void> { return this.storage.deleteNote(this.userId, id) }
+
+  /** The recording as a stream (for playback), or null if the note has none. May be fetched back from the backend. */
+  async audio(meta: NoteMeta): Promise<StoredStream | null> {
+    return meta.audioFile ? this.storage.getStream(this.userId, meta.id, meta.audioFile) : null
   }
 
-  audioPath(meta: NoteMeta): string | null {
-    return meta.audioFile ? join(this.dir(meta.id), meta.audioFile) : null
+  /** The whole recording in memory (for transcription), or null if there is none. */
+  async audioBytes(meta: NoteMeta): Promise<Uint8Array | null> {
+    const found = await this.audio(meta)
+    return found ? payloadBytes(found.stream) : null
   }
+
+  /** Transcribed and digested: let the backend apply its retainAudio policy. */
+  releaseAudio(id: string): Promise<void> { return this.storage.releaseAudio(this.userId, id) }
 
   /** Stores an upload. The note only exists once complete, so a crash never leaves half a note. Returns false for a repeat. */
-  async saveUpload(meta: NoteMeta, audio: Uint8Array, extension: string): Promise<boolean> {
-    if (await this.has(meta.id)) return false
-    const final = this.dir(meta.id)
-    const partial = `${final}.partial-${randomUUID().slice(0, 8)}`
-    await mkdir(partial, { recursive: true })
-    try {
-      await writeFileAtomic(join(partial, `audio.${extension}`), audio)
-      await writeJson(join(partial, 'meta.json'), { ...meta, audioFile: `audio.${extension}`, audioBytes: audio.byteLength })
-      await rename(partial, final)
-    } catch (error) {
-      await rm(partial, { recursive: true, force: true })
-      if (await this.has(meta.id)) return false
-      throw error
-    }
-    return true
+  saveUpload(meta: NoteMeta, audio: Uint8Array, extension: string): Promise<boolean> {
+    const file = `audio.${extension}`
+    return this.storage.createNote(this.userId, meta.id, { meta: encodeJson({ ...meta, audioFile: file, audioBytes: audio.byteLength }), files: { [file]: audio } })
   }
 
   /** A note typed or dictated in chat. No audio, and the "transcript" is the text itself. */
-  async saveTextNote(meta: NoteMeta, text: string): Promise<void> {
-    await mkdir(this.dir(meta.id), { recursive: true })
-    await writeJson(join(this.dir(meta.id), 'transcript.json'), { text, language: null, durationSec: null, model: 'text', segments: [], suspectedSilence: false, createdAt: meta.receivedAt } satisfies Transcript)
-    await writeJson(join(this.dir(meta.id), 'meta.json'), meta)
+  async saveTextNote(meta: NoteMeta, body: string): Promise<void> {
+    const transcript: Transcript = { text: body, language: null, durationSec: null, model: 'text', segments: [], suspectedSilence: false, createdAt: meta.receivedAt }
+    if (!(await this.storage.createNote(this.userId, meta.id, { meta: encodeJson(meta), files: { 'transcript.json': encodeJson(transcript) } }))) throw new Error('a note with this id already exists')
   }
 }
