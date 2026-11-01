@@ -1,4 +1,5 @@
 import { createApp } from './app.ts'
+import { Brain } from './brain.ts'
 import { loadConfig } from './config.ts'
 
 function pair(argv: string[]) {
@@ -13,8 +14,19 @@ function pair(argv: string[]) {
   console.log(`${app.replace(/\/+$/, '')}/#/pair?${params}`)
 }
 
+/** Throws away nothing that matters: rebuilds the search index and the generated vault pages from the stored notes. */
+async function reindex() {
+  const brain = new Brain(loadConfig())
+  try {
+    await brain.vault.init()
+    const { notes, pages } = await brain.reindex()
+    console.log(`reindexed ${notes} note${notes === 1 ? '' : 's'}, wrote ${pages} vault page${pages === 1 ? '' : 's'}`)
+  } finally { brain.close() }
+}
+
 async function main() {
   if (process.argv[2] === 'pair') return pair(process.argv.slice(3))
+  if (process.argv[2] === 'reindex') return reindex()
   const config = loadConfig()
   const app = createApp(config)
   await app.start()

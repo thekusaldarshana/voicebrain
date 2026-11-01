@@ -124,7 +124,7 @@ export class Index {
               snippet(docs, 3, '«', '»', ' … ', 24) AS snippet, n.day AS day, n.time AS time
          FROM docs d LEFT JOIN notes n ON d.kind = 'note' AND n.id = d.ref
         WHERE docs MATCH ? ${kind ? 'AND d.kind = ?' : ''}
-        ORDER BY bm25(docs, 0, 0, 4.0, 1.0) LIMIT ?`,
+        ORDER BY bm25(docs, 0, 0, 4.0, 1.0), n.recorded_at DESC, d.ref LIMIT ?`,
       words.map(word => `"${word.replace(/"/g, '')}"*`).join(joiner), ...(kind ? [kind] : []), limit,
     ) as unknown as Hit[]
     const strict = run(' AND ')
@@ -150,7 +150,11 @@ export class Index {
   clear() {
     for (const table of ['notes', 'tasks', 'entities', 'wiki', 'docs']) this.db.exec(`DELETE FROM ${table}`)
   }
-  notesForDay(day: string): NoteRow[] { return this.all<NoteRow>('SELECT * FROM notes WHERE day = ? ORDER BY recorded_at', day) }
+  notesForDay(day: string): NoteRow[] { return this.all<NoteRow>('SELECT * FROM notes WHERE day = ? ORDER BY recorded_at, id', day) }
+
+  /** Every day that has a note, and every person or project that has a mention: what a full rebuild must write pages for. */
+  days(): string[] { return this.all<{ day: string }>('SELECT DISTINCT day FROM notes ORDER BY day').map(row => row.day) }
+  entityKeys(): Array<{ kind: 'person' | 'project'; slug: string }> { return this.all<{ kind: 'person' | 'project'; slug: string }>('SELECT DISTINCT kind, slug FROM entities ORDER BY kind, slug') }
 
   setTaskStatus(id: string, status: TaskStatus, updatedAt: string) {
     this.run('INSERT OR REPLACE INTO task_status VALUES (?,?,?)', id, status, updatedAt)
@@ -176,7 +180,7 @@ export class Index {
       `SELECT t.*, COALESCE(s.status, 'open') AS status, n.title AS note_title, n.day AS day
          FROM tasks t LEFT JOIN task_status s ON s.id = t.id JOIN notes n ON n.id = t.note_id
         WHERE COALESCE(s.status, 'open') = 'open' ${project ? 'AND t.project IS NOT NULL AND lower(replace(t.project, \' \', \'-\')) LIKE ?' : ''}
-        ORDER BY t.due IS NULL, t.due, t.recorded_at LIMIT ?`,
+        ORDER BY t.due IS NULL, t.due, t.recorded_at, t.note_id, t.idx LIMIT ?`,
       ...(project ? [`%${slugify(project)}%`] : []), limit,
     )
   }
@@ -184,7 +188,7 @@ export class Index {
   mentions(kind: 'person' | 'project', slug: string, limit = 50): Mention[] {
     return this.all<Mention>(
       `SELECT e.note_id AS note_id, e.name AS name, e.context AS context, n.day AS day, n.time AS time, n.title AS title, n.vault_path AS vault_path
-         FROM entities e JOIN notes n ON n.id = e.note_id WHERE e.kind = ? AND e.slug = ? ORDER BY n.recorded_at DESC LIMIT ?`, kind, slug, limit)
+         FROM entities e JOIN notes n ON n.id = e.note_id WHERE e.kind = ? AND e.slug = ? ORDER BY n.recorded_at DESC, n.id LIMIT ?`, kind, slug, limit)
   }
 
   /** Entities whose names or slugs overlap the words of `topic`. */

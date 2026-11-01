@@ -15,6 +15,8 @@ import { join } from 'node:path'
 const STATUS_FILE = 'state/task-status.json'
 const WIKI_PATH = /^[A-Za-z0-9][A-Za-z0-9 _\-./]*\.md$/
 const MAX_WIKI_BYTES = 200_000
+/** Folders of generated pages: everything in them can be rebuilt from the stored notes. */
+const GENERATED_DIRS = ['notes', 'daily', 'projects', 'people']
 
 /** Offset of an IANA zone from UTC at `date`, in minutes. */
 export function tzOffsetMinutes(timeZone: string, date: Date): number {
@@ -62,7 +64,8 @@ export class Brain {
     const ids = await this.store.ids()
     let withTranscript = 0
     for (const id of ids) if (await this.store.transcript(id)) withTranscript += 1
-    if (process.env.REINDEX === '1' || this.index.noteCount() !== withTranscript) await this.reindex()
+    if (process.env.REINDEX === '1') await this.reindex()
+    else if (this.index.noteCount() !== withTranscript) await this.rebuildIndex()
     else await this.syncWiki()
   }
 
@@ -70,19 +73,46 @@ export class Brain {
     return (await readJson<Record<string, TaskStatusEntry>>(join(this.vault.root, STATUS_FILE))) ?? {}
   }
 
-  /** Rebuilds the whole search index from the inbox and vault files. Nothing in the vault is rewritten. */
-  async reindex(): Promise<number> {
+  /**
+   * Rebuilds the search index from the stored notes (and the wiki folder). The vault pages are not rewritten.
+   * Cheap enough to run at startup when the index is missing or out of step.
+   */
+  async rebuildIndex(): Promise<number> { return (await this.rebuild(false)).notes }
+
+  /**
+   * Rebuilds everything derived from the stored notes: the search index, every generated vault page (notes,
+   * daily, projects, people, tasks.md) and drops generated pages that no stored note explains. Nothing the
+   * storage holds is read-modify-written, and `wiki/` and `state/` are left alone: those are not derived.
+   * Safe to run again any time, and to run after deleting the index and the generated pages.
+   */
+  reindex(): Promise<{ notes: number; pages: number }> {
+    return this.vault.exclusive(() => this.rebuild(true))
+  }
+
+  private async rebuild(pages: boolean): Promise<{ notes: number; pages: number }> {
     this.index.clear()
     this.index.loadTaskStatuses(await this.statuses())
-    let count = 0
+    const written = new Set<string>()
+    let notes = 0
     for (const id of await this.store.ids()) {
       const [meta, transcript] = await Promise.all([this.store.meta(id), this.store.transcript(id)])
       if (!meta || !transcript) continue
-      this.index.upsertNote(meta, transcript, await this.store.digest(id), notePath(meta), await this.store.edits(id))
-      count += 1
+      const [digest, edits] = await Promise.all([this.store.digest(id), this.store.edits(id)])
+      const path = notePath(meta)
+      this.index.upsertNote(meta, transcript, digest, path, edits)
+      notes += 1
+      if (pages) {
+        await this.vault.write(path, renderNote(meta, transcript, digest, this.index.taskStatuses(id), edits))
+        written.add(path)
+      }
     }
     await this.syncWiki()
-    return count
+    if (!pages) return { notes, pages: 0 }
+    for (const day of this.index.days()) { const path = await this.refreshDay(day); if (path) written.add(path) }
+    for (const entity of this.index.entityKeys()) { const path = await this.refreshEntity(entity.kind, entity.slug); if (path) written.add(path) }
+    await this.vault.write('tasks.md', renderTasks(this.index.openTasks(), this.today()))
+    for (const dir of GENERATED_DIRS) for (const path of await this.vault.listMarkdown(dir)) if (!written.has(path)) await this.vault.remove(path)
+    return { notes, pages: written.size + 1 }
   }
 
   /** Picks up wiki pages edited outside the server (git, Obsidian) and forgets deleted ones. */
@@ -122,18 +152,22 @@ export class Brain {
     await this.vault.write('tasks.md', renderTasks(this.index.openTasks(), this.today()))
   }
 
-  private async refreshDay(day: string): Promise<void> {
+  /** Writes the day's page (or removes it when no note is left). Returns the page's path, or null if there is none. */
+  private async refreshDay(day: string): Promise<string | null> {
     const notes = this.index.notesForDay(day)
-    if (!notes.length) { await this.vault.remove(`daily/${day}.md`); return }
-    await this.vault.write(`daily/${day}.md`, renderDaily(day, notes, new Map(notes.map(note => [note.id, this.index.tasksOfNote(note.id)]))))
+    const path = `daily/${day}.md`
+    if (!notes.length) { await this.vault.remove(path); return null }
+    await this.vault.write(path, renderDaily(day, notes, new Map(notes.map(note => [note.id, this.index.tasksOfNote(note.id)]))))
+    return path
   }
 
-  private async refreshEntity(kind: 'person' | 'project', slug: string): Promise<void> {
+  private async refreshEntity(kind: 'person' | 'project', slug: string): Promise<string | null> {
     const mentions = this.index.mentions(kind, slug, 200)
     const path = `${kind === 'person' ? 'people' : 'projects'}/${slug}.md`
     const first = mentions[0]
-    if (!first) { await this.vault.remove(path); return }
+    if (!first) { await this.vault.remove(path); return null }
     await this.vault.write(path, renderEntity(kind, first.name, mentions, kind === 'project' ? this.index.openTasks(slug) : []))
+    return path
   }
 
   // ---- what the assistant asks for ----
