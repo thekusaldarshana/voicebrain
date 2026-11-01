@@ -6,7 +6,7 @@ import { requireBearerAuth } from '@modelcontextprotocol/sdk/server/auth/middlew
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js'
 import { createAuth, messagePage } from './auth.ts'
 import { DriveAccounts, TokenCipher } from './drive.ts'
-import type { DriveTokenProvider } from './drive-tokens.ts'
+import { DriveNotConnected, type DriveTokenProvider } from './drive-tokens.ts'
 import type { Brain } from './brain.ts'
 import { authMode, loadStorageConfig, type Config } from './config.ts'
 import { Devices } from './devices.ts'
@@ -274,6 +274,8 @@ export function createApp(config: Config, options: PipelineOptions = {}, authOpt
 
   app.use((error: unknown, _req: Request, res: Response, _next: NextFunction) => {
     if ((error as { type?: string })?.type === 'entity.parse.failed') { res.status(400).json({ error: 'The request body is not valid JSON.' }); return }
+    // Their Drive is not connected, or access was revoked: not a server fault. The app shows a "Connect Drive" button for this.
+    if (error instanceof DriveNotConnected) { if (!res.headersSent) res.status(409).json({ error: 'Google Drive is not connected. Open voicebrain and connect your Drive.', code: 'drive-not-connected', connectPath: '/auth/drive/start' }); return }
     console.error(error)
     if (!res.headersSent) res.status(500).json({ error: 'server error' })
   })

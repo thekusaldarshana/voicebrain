@@ -75,7 +75,9 @@ export class Tenants {
     const brain = new Brain(config, undefined, new ScopedStorage(this.shared ?? this.owner.brain.store.storage, userId))
     const pipeline = new Pipeline(brain, this.options)
     brain.onNewWork = () => pipeline.kick()
-    await brain.init()
+    // Opening reads the person's notes. If their Drive is not connected (yet, or any more) that fails with
+    // DriveNotConnected: nothing is kept, and the next request tries again once they have connected.
+    try { await brain.init() } catch (error) { brain.close(); throw error }
     if (this.running && config.workerEnabled) pipeline.start()
     return { userId, brain, pipeline }
   }
@@ -84,7 +86,8 @@ export class Tenants {
     await this.owner.brain.init()
     this.running = true
     if (this.config.workerEnabled) this.owner.pipeline.start()
-    for (const id of userIds) await this.for(id)
+    // One person who cannot be opened (Drive not connected, a revoked grant) must not keep everyone else from starting.
+    for (const id of userIds) await this.for(id).catch(error => console.error(`not opened at start: user ${id.slice(0, 6)}… (${error instanceof Error ? error.message : 'unknown error'}); they are retried when they next use the server`))
     if (this.config.workerEnabled) for (const tenant of await this.settled()) tenant.pipeline.start()
   }
 
